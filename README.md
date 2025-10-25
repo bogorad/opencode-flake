@@ -1,122 +1,90 @@
 # OpenCode Nix Flake
 
-This repository packages [OpenCode](https://github.com/sst/opencode), a terminal-based AI assistant for developers, as a Nix flake. OpenCode is developed by SST (Serverless Stack) and provides powerful AI-powered coding assistance directly in your terminal.
+This repository provides a Nix flake for the [OpenCode](https://github.com/sst/opencode) terminal AI assistant. The primary feature is a GitHub Actions workflow that automates version updates and cryptographic hash verification for all package dependencies across multiple architectures.
 
-This flake automatically stays up-to-date with the latest OpenCode releases through automated workflows that run every 6 hours.
+## Abstract
+
+This project provides a Nix package for OpenCode that is maintained through an automated CI/CD system. A GitHub Actions workflow monitors for upstream releases, updates the package definition, and calculates the necessary source, Go vendor, and Node.js dependency hashes for both `x86_64` and `aarch64` architectures. The process uses native compilation for `x86_64` and QEMU-based emulation to determine the `aarch64` hashes, committing the updated and verified package definition back to the repository.
 
 ## Quick Start
 
 ```bash
-# Run directly from the flake
-nix run github:aodhanhayter/opencode-flake
+# Run directly
+nix run github:bogorad/opencode-flake
 
-# Check the version
-nix run github:aodhanhayter/opencode-flake -- --version
-
-# Install to your profile
-nix profile install github:aodhanhayter/opencode-flake
+# Install to user profile
+nix profile install github:bogorad/opencode-flake
 ```
 
 ## Installation
 
-### Profile Installation
-```bash
-nix profile install github:aodhanhayter/opencode-flake
-```
+Add the flake to a NixOS or Home Manager configuration.
 
-### NixOS/Home Manager Configuration
 ```nix
 {
-  inputs.opencode-flake.url = "github:aodhanhayter/opencode-flake";
+  inputs.opencode-flake.url = "github:bogorad/opencode-flake";
 
-  # In your configuration:
+  # Example for configuration.nix or home.nix
   environment.systemPackages = [ inputs.opencode-flake.packages.${pkgs.system}.default ];
-
-  # Or in home-manager:
-  home.packages = [ inputs.opencode-flake.packages.${pkgs.system}.default ];
 }
 ```
 
-## Packaging
+## Automation Logic
 
-This flake builds OpenCode from source, copying the approach from the official nixpkgs build. If you don't require the latest version of opencode, I recommend using the official nixpkgs version as it will likely be more stable and well tested.
+The repository uses a GitHub Actions workflow to keep the package current. The process is as follows:
 
-- **Source-based builds**: Fetches source code directly from the [sst/opencode](https://github.com/sst/opencode) repository
-- **Multi-component build system**:
-  - **Go TUI Component**: Builds the terminal UI (`packages/tui`) using `buildGoModule`
-  - **TypeScript Core**: Uses Bun to compile the main application logic
-- **Deterministic builds**: Includes a local models patch to avoid network dependencies during build
-- **Cross-platform support**: Supports all major platforms with proper platform-specific library linking
+#### 1. Version Detection
 
-## Development
+An RSS monitor workflow checks the upstream OpenCode GitHub releases feed. If a new version is found, it triggers the main update workflow via a `repository_dispatch` event.
 
-```bash
-# Enter development shell with OpenCode available
-nix develop github:aodhanhayter/opencode-flake
+#### 2. Environment Setup
 
-# Build locally
-nix build
+The workflow runner prepares a build environment by installing Nix, the `nix-update` utility, and QEMU for cross-architecture emulation.
 
-# Test the package
-nix flake check
-```
+#### 3. Version Update
 
-## Automated Maintenance
+The `nix-update` command is executed to check the latest upstream version. If the upstream version is newer than the one defined in `package.nix`, the `version` attribute in the file is updated. The workflow proceeds regardless of whether a new version was found.
 
-This repository features **fully automated maintenance**:
+#### 4. Hash Reset
 
-- **Automatic updates**: GitHub Actions workflow runs every 6 hours using `nix-update`
-- **Version detection**: Automatically detects new OpenCode releases from upstream
-- **Auto-deployment**: Updates are automatically tested, tagged, and released
-- **Zero-maintenance**: No manual intervention required for version updates
+To ensure all hashes are recalculated, the workflow finds and replaces all hash values in `package.nix` with predefined dummy values. This applies to the following:
 
-### Workflow Status
+- `src` hash (`fetchFromGitHub`)
+- `vendorHash` (`buildGoModule`)
+- `outputHash` for both `x86_64-linux` and `aarch64-linux` (`node_modules` derivation)
 
-- Check the [workflow runs](https://github.com/AodhanHayter/opencode-flake/actions/workflows/update-opencode-nix.yml) to see recent updates
-- **Note**: Scheduled workflows are automatically disabled after 60 days of repository inactivity
-- To reactivate: Make any commit or [manually trigger the workflow](https://github.com/AodhanHayter/opencode-flake/actions/workflows/update-opencode-nix.yml)
+#### 5. Native Build and Verification (`x86_64`)
 
-### Manual Updates (if needed)
+The workflow enters a loop to resolve hashes for the native `x86_64` architecture:
 
-```bash
-# Force update to latest version
-nix-update --flake opencode
+1.  It attempts to build the package using `nix build`. This command is expected to fail due to one of the dummy hashes.
+2.  The error output is parsed to extract the correct hash from the `got: ...` line.
+3.  The corresponding dummy hash in `package.nix` is replaced with the correct value.
+4.  This loop repeats, fixing one hash per iteration, until `nix build` completes successfully. A successful build serves as verification that all `x86_64`-related hashes are correct.
 
-# Build and test
-nix build && nix flake check
-```
+#### 6. Emulated Build and Hash Discovery (`aarch64`)
 
-**Note**: When OpenCode updates, `nix-update` may fail during the build phase if Go module dependencies have changed. This is normal - check the build logs for the correct `vendorHash` and update `package.nix` manually.
+To determine the `aarch64` `outputHash`, a separate strategy is used to accommodate the slow performance of emulation:
+
+1.  The workflow executes `nix build --system aarch64-linux` a single time.
+2.  This command is expected to fail due to the remaining dummy hash for the `aarch64` architecture.
+3.  The error output is parsed to extract the correct hash from the `got: ...` line.
+4.  The `aarch64-linux` dummy hash in `package.nix` is replaced with this correct value. The step then concludes without a second, slow verification build.
+
+#### 7. Commit and Push
+
+Finally, the workflow saves the changes:
+
+1.  It runs `git diff` to check if `package.nix` has been modified. If not, the job finishes.
+2.  If the file has changed, it creates a new Git commit.
+3.  It executes `git pull --rebase` to synchronize its local state with the remote branch, preventing push conflicts that could arise from long run times.
+4.  It pushes the new commit and the corresponding version tag to the `master` branch of the repository.
 
 ## Supported Systems
 
-- `aarch64-darwin` (macOS on Apple Silicon)
-- `x86_64-darwin` (macOS on Intel)
-- `aarch64-linux` (Linux on ARM64)
-- `x86_64-linux` (Linux on x86_64)
-
-## Repository Structure
-
-- `flake.nix`: Clean, minimal flake following nixpkgs patterns
-- `package.nix`: Comprehensive OpenCode package definition with source builds
-- `local-models-dev.patch`: Patch for deterministic builds with local models
-- `.github/workflows/`: Automated CI/CD workflows
-
-## CI/CD & Automation
-
-### GitHub Actions Workflows
-
-1. **Automated Updates** (`update-opencode-nix.yml`):
-   - Runs every 6 hours (00:15, 06:15, 12:15, 18:15 UTC)
-   - Uses `nix-update` for reliable version detection
-   - Auto-creates releases and tags
-   - Handles errors and cleanup automatically
-   - Can be manually triggered via GitHub Actions UI
-
-2. **Build Verification**:
-   - Ensures packages build correctly across all platforms
-   - Validates version reporting and functionality
+- `aarch64-linux`
+- `x86_64-linux`
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT

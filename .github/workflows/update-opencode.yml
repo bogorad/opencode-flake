@@ -1,252 +1,117 @@
-name: Update OpenCode with nix-update
-
-# IMPORTANT: GitHub scheduled workflows requirements:
-# 1. Only runs on the default branch (master/main)
-# 2. Automatically disabled after 60 days of repository inactivity
-# 3. Must be pushed to default branch before schedule activates
-# 4. All times are in UTC
-#
-# To reactivate after inactivity:
-# - Make any commit to the repository
-# - Or manually trigger using workflow_dispatch
+name: Update OpenCode
 
 on:
-  schedule:
-    # Run every 6 hours at 15 minutes past (avoids peak times)
-    # Times: 00:15, 06:15, 12:15, 18:15 UTC
-    - cron: "15 */6 * * *"
+  repository_dispatch:
+    types:
+      [
+        opencode-release-detected,
+      ]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Specific version to update to (optional)"
-        required: false
-        type: string
 
 permissions:
   contents: write
 
 jobs:
-  update-opencode:
+  update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
+          # Use a token that can trigger other workflows if needed
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: Set up Nix
-        uses: cachix/install-nix-action@v24
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+      - name: Setup Nix
+        uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install nix-update
         run: nix profile install github:Mic92/nix-update
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Get current version for comparison
-        id: current-version
+      - name: Step 1 - Update Version String
         run: |
-          CURRENT_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "current-version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "Current version: $CURRENT_VERSION"
+          echo "▶ Checking for new version..."
+          nix-update --flake opencode --version=auto || true
+          VERSION=$(grep -oP 'version = "\K[^"]+' package.nix | head -1)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "✓ Version is set to: $VERSION"
 
-      - name: Update OpenCode with nix-update
-        id: update-check
+      - name: Step 2 - Unconditionally Reset All Hashes
         run: |
-          echo "Running nix-update for OpenCode..."
+          echo "▶ Unconditionally resetting all hash types to dummy values..."
+          DUMMY_A="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+          DUMMY_C="sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
+          sed -i -E "s/(hash = \").*(\")/\1$DUMMY_A\2/" package.nix
+          sed -i -E "s/(vendorHash = \").*(\")/\1$DUMMY_C\2/" package.nix
+          sed -i -E "s/(x86_64-linux = \").*(\")/\1$DUMMY_B\2/" package.nix
+          sed -i -E "s/(aarch64-linux = \").*(\")/\1$DUMMY_B\2/" package.nix
+          echo "✓ Dummy hashes have been set."
 
-          # Run nix-update for flakes - specify the flake attribute
-          if nix-update --flake opencode --build; then
-            # Check if any files were actually changed
-            if git diff --quiet; then
-              echo "No changes detected - already at latest version"
-              echo "has-changes=false" >> $GITHUB_OUTPUT
+      - name: Step 3 - Verification Loop for Native Arch x86_64-linux
+        run: |
+          echo "▶ Starting Verification Loop for Native (x86_64-linux)"
+          MAX_ATTEMPTS=4
+          for ATTEMPT in $(seq 1 $MAX_ATTEMPTS); do
+            echo "---"
+            echo "Native Build Attempt $ATTEMPT/$MAX_ATTEMPTS"
+            BUILD_OUTPUT=$(nix build .#opencode -L 2>&1) || true
+            if ! echo "$BUILD_OUTPUT" | grep -qE "(error:|hash mismatch)"; then echo "✓ Native build successful! All x86_64 hashes are verified."; exit 0; fi
+            echo "Build failed as expected. Analyzing error..."
+            CORRECT_HASH=$(echo "$BUILD_OUTPUT" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
+            if [ -z "$CORRECT_HASH" ]; then echo "✗ Build failed for a reason other than hash mismatch."; echo "$BUILD_OUTPUT"; exit 1; fi
+            echo "→ Nix expects hash: $CORRECT_HASH"
+            if grep -q "sha256-AAAA" package.nix; then
+              sed -i "s|sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=|$CORRECT_HASH|" package.nix
+            elif grep -q "x86_64-linux = \"sha256-BBBB" package.nix; then
+              sed -i -E "s|(x86_64-linux = \")sha256-BBBB[^\"]*(\")|\1$CORRECT_HASH\2|" package.nix
+            elif grep -q "sha256-CCCC" package.nix; then
+              sed -i "s|sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=|$CORRECT_HASH|" package.nix
             else
-              NEW_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
-              echo "Successfully updated to version: $NEW_VERSION"
-              echo "has-changes=true" >> $GITHUB_OUTPUT
-              echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+              echo "✗ Native hash mismatch, but no known dummy hashes left for this arch."; exit 1
             fi
+          done
+          echo "✗ Failed to fix native hashes after $MAX_ATTEMPTS attempts."; exit 1
+
+      - name: Step 4 - One-Shot Discovery for Emulated Arch aarch64-linux
+        run: |
+          echo "▶ Starting One-Shot Discovery for Emulated (aarch64-linux) hash"
+          BUILD_OUTPUT=$(nix build .#opencode --system aarch64-linux -L 2>&1) || true
+          if ! echo "$BUILD_OUTPUT" | grep -q "hash mismatch"; then echo "✓ Emulated build did not fail with a hash mismatch. Assuming aarch64 hash is already correct."; exit 0; fi
+          echo "Build failed as expected. Extracting the correct hash..."
+          CORRECT_HASH=$(echo "$BUILD_OUTPUT" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
+          if [ -z "$CORRECT_HASH" ]; then echo "✗ Emulated build failed for a reason other than hash mismatch."; echo "$BUILD_OUTPUT"; exit 1; fi
+          echo "→ Nix expects hash: $CORRECT_HASH"
+          echo "  Replacing aarch64-linux outputHash..."
+          sed -i -E "s|(aarch64-linux = \")sha256-BBBB[^\"]*(\")|\1$CORRECT_HASH\2|" package.nix
+          echo "✓ aarch64 hash discovered and written successfully."
+
+      - name: Step 5 - Commit and Push if Changes Exist
+        run: |
+          echo "▶ Checking for changes to package.nix..."
+          # Use `git diff --quiet` to see if the file has actually changed.
+          if ! git diff --quiet package.nix; then
+            echo "✓ Changes detected. Committing and pushing..."
+            git add package.nix
+            git commit -m "Update OpenCode to ${{ env.VERSION }}" -m "Automated hash verification for x86_64 and aarch64"
+            git tag -f "v${{ env.VERSION }}"
+
+            echo "▶ Synchronizing with remote branch before pushing..."
+            # Pull with rebase to handle potential race conditions where the remote branch was updated
+            # during the workflow run. This avoids merge conflicts for this linear update.
+            git pull origin master --rebase
+
+            echo "▶ Pushing changes to remote..."
+            git push origin HEAD:master
+            git push -f origin "v${{ env.VERSION }}"
           else
-            echo "nix-update failed, checking if it's a vendorHash issue..."
-            
-            # Check if nix-update updated the version but build failed
-            if git diff --name-only | grep -q "package.nix"; then
-              echo "package.nix was modified, attempting to fix vendorHash..."
-              
-              # Run the vendor hash update script
-              if ./scripts/update-vendor-hash.sh; then
-                echo "Successfully updated vendorHash"
-                NEW_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
-                echo "has-changes=true" >> $GITHUB_OUTPUT
-                echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
-                echo "vendor-hash-updated=true" >> $GITHUB_OUTPUT
-              else
-                echo "Failed to update vendorHash"
-                exit 1
-              fi
-            else
-              echo "nix-update failed without modifying package.nix"
-              exit 1
-            fi
-          fi
-
-      - name: Handle manual version input
-        if: github.event.inputs.version
-        id: manual-version
-        run: |
-          MANUAL_VERSION="${{ github.event.inputs.version }}"
-          CURRENT_VERSION="${{ steps.current-version.outputs.current-version }}"
-
-          if [ "$CURRENT_VERSION" = "$MANUAL_VERSION" ]; then
-            echo "Already at requested version: $MANUAL_VERSION"
-            echo "has-changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "Manual version specified: $MANUAL_VERSION"
-            # For manual versions, we'll run nix-update and then check if it updated to the desired version
-            NEW_VERSION=$(grep -o 'version = "[^"]*"' package.nix | head -1 | sed 's/version = "\(.*\)"/\1/')
-            if [ "$NEW_VERSION" = "$MANUAL_VERSION" ]; then
-              echo "Successfully updated to manual version: $MANUAL_VERSION"
-            else
-              echo "Warning: nix-update found version $NEW_VERSION, but manual version $MANUAL_VERSION was requested"
-            fi
-          fi
-
-      - name: Create update branch and commit changes
-        if: steps.update-check.outputs.has-changes == 'true'
-        id: create-branch
-        run: |
-          NEW_VERSION="${{ steps.update-check.outputs.new-version }}"
-          BRANCH_NAME="update-opencode-${NEW_VERSION}-$(date +%s)"
-          echo "branch-name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-
-          echo "Creating branch: $BRANCH_NAME"
-          git checkout -b "$BRANCH_NAME"
-
-          echo "Committing changes"
-          git add .
-          
-          # Build commit message based on what was updated
-          COMMIT_MSG="Update OpenCode to version $NEW_VERSION"
-          COMMIT_MSG="${COMMIT_MSG}\n- Updated version and all platform-specific hashes"
-          if [ "${{ steps.update-check.outputs.vendor-hash-updated }}" = "true" ]; then
-            COMMIT_MSG="${COMMIT_MSG}\n- Fixed Go vendorHash for tui module"
-          fi
-          COMMIT_MSG="${COMMIT_MSG}\n- Updated subpackage dependencies (tui, node_modules)"
-          COMMIT_MSG="${COMMIT_MSG}\n- Automated update via nix-update"
-          
-          echo -e "$COMMIT_MSG" | git commit -F -
-
-      - name: Create tag on branch
-        if: steps.update-check.outputs.has-changes == 'true'
-        run: |
-          NEW_VERSION="${{ steps.update-check.outputs.new-version }}"
-          echo "Creating tag v$NEW_VERSION"
-          git tag -a "v$NEW_VERSION" -m "OpenCode Flake version $NEW_VERSION"
-
-      - name: Merge branch to master
-        if: steps.update-check.outputs.has-changes == 'true'
-        id: merge-branch
-        run: |
-          BRANCH_NAME="${{ steps.create-branch.outputs.branch-name }}"
-          echo "Switching to master and merging $BRANCH_NAME"
-
-          # Switch to master and ensure it's up to date
-          git checkout ${{ github.ref_name }}
-          git pull origin ${{ github.ref_name }}
-
-          # Attempt fast-forward merge
-          if git merge "$BRANCH_NAME" --ff-only; then
-            echo "Successfully merged $BRANCH_NAME to master"
-            echo "merge-success=true" >> $GITHUB_OUTPUT
-          else
-            echo "Fast-forward merge failed. Master may have changed during update."
-            echo "merge-success=false" >> $GITHUB_OUTPUT
-            echo "This could happen if:"
-            echo "1. Another workflow updated master during this run"
-            echo "2. Manual commits were made to master"
-            echo "The update branch $BRANCH_NAME contains the changes and can be manually reviewed."
-            exit 1
-          fi
-
-      - name: Handle merge failure
-        if: failure() && steps.merge-branch.outputs.merge-success == 'false'
-        run: |
-          echo "Merge failed - the update was successful but couldn't be automatically merged."
-          echo "Branch ${{ steps.create-branch.outputs.branch-name }} contains the updates."
-          echo "Manual intervention may be required to resolve conflicts."
-
-      - name: Push changes and tags
-        if: steps.update-check.outputs.has-changes == 'true'
-        run: |
-          NEW_VERSION="${{ steps.update-check.outputs.new-version }}"
-          echo "Pushing master and tags"
-          git push origin ${{ github.ref_name }}
-          git push origin "v$NEW_VERSION"
-
-      - name: Create GitHub Release
-        if: steps.update-check.outputs.has-changes == 'true'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ steps.update-check.outputs.new-version }}
-          name: OpenCode Flake ${{ steps.update-check.outputs.new-version }}
-          body: |
-            OpenCode Flake version ${{ steps.update-check.outputs.new-version }}
-
-            This release packages [OpenCode](https://github.com/sst/opencode) v${{ steps.update-check.outputs.new-version }} as a Nix flake.
-
-            **Automated Update**: This version was automatically updated using nix-update, ensuring all dependencies and hashes are correct.
-
-            ## Installation
-
-            ```bash
-            # Run OpenCode directly
-            nix run github:AodhanHayter/opencode-flake
-
-            # Or install to your profile
-            nix profile install github:AodhanHayter/opencode-flake
-            ```
-
-            ## Using in a flake
-
-            ```nix
-            {
-              inputs.opencode-flake.url = "github:AodhanHayter/opencode-flake";
-
-              outputs = { self, nixpkgs, opencode-flake, ... }: {
-                # Use in your outputs
-                packages.x86_64-linux.opencode = opencode-flake.packages.x86_64-linux.default;
-              };
-            }
-            ```
-          draft: false
-          prerelease: false
-
-      - name: Cleanup update branch
-        if: always() && steps.create-branch.outputs.branch-name
-        run: |
-          BRANCH_NAME="${{ steps.create-branch.outputs.branch-name }}"
-          if [ -n "$BRANCH_NAME" ]; then
-            echo "Cleaning up branch: $BRANCH_NAME"
-            # Ensure we're on master before deleting branch
-            git checkout ${{ github.ref_name }} 2>/dev/null || true
-            # Delete the update branch
-            git branch -D "$BRANCH_NAME" 2>/dev/null || echo "Branch $BRANCH_NAME already deleted or doesn't exist"
-          fi
-
-      - name: Summary
-        if: always()
-        run: |
-          if [ "${{ steps.update-check.outputs.has-changes }}" = "true" ]; then
-            echo "✅ Successfully updated OpenCode to version ${{ steps.update-check.outputs.new-version }}"
-            echo "🏷️  Created tag and GitHub release"
-          else
-            echo "ℹ️  No updates needed - already at latest version"
+            echo "✓ No changes to package.nix. Repository is already up-to-date."
           fi
