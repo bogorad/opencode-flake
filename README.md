@@ -1,90 +1,108 @@
-# OpenCode Nix Flake
+# OpenCode Nix Flake/Package
 
-This repository provides a Nix flake for the [OpenCode](https://github.com/sst/opencode) terminal AI assistant. The primary feature is a GitHub Actions workflow that automates version updates and cryptographic hash verification for all package dependencies across multiple architectures.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+This repository provides a Nix flake for installing **[OpenCode](https://github.com/sst/opencode)**, a powerful terminal-based AI coding agent.
 
-## Abstract
+The primary goal of this flake is to provide a reliable and **continuously updated** package for the Nix ecosystem.
 
-This project provides a Nix package for OpenCode that is maintained through an automated CI/CD system. A GitHub Actions workflow monitors for upstream releases, updates the package definition, and calculates the necessary source, Go vendor, and Node.js dependency hashes for both `x86_64` and `aarch64` architectures. The process uses native compilation for `x86_64` and QEMU-based emulation to determine the `aarch64` hashes, committing the updated and verified package definition back to the repository.
+## Features
 
-## Quick Start
-
-```bash
-# Run directly
-nix run github:bogorad/opencode-flake
-
-# Install to user profile
-nix profile install github:bogorad/opencode-flake
-```
+- **Fully Automated:** A GitHub Action runs on a schedule to check for new upstream releases.
+- **Always Up-to-Date:** When a new version of OpenCode is released, this flake automatically updates the version, fetches the new source code, and corrects all dependency hashes.
+- **Reproducible:** Built with Nix for perfect, bit-for-bit reproducibility.
 
 ## Installation
 
-Add the flake to a NixOS or Home Manager configuration.
+To install OpenCode using this flake, ensure you have [Nix with flakes enabled](https://nixos.wiki/wiki/Flakes#Enable_flakes) and run the following command:
 
-```nix
-{
-  inputs.opencode-flake.url = "github:bogorad/opencode-flake";
-
-  # Example for configuration.nix or home.nix
-  environment.systemPackages = [ inputs.opencode-flake.packages.${pkgs.system}.default ];
-}
+```bash
+nix profile add github:bogorad/opencode-flake
 ```
 
-## Automation Logic
+The `opencode` command will then be available in your shell.
 
-The repository uses a GitHub Actions workflow to keep the package current. The process is as follows:
+## Usage
 
-#### 1. Version Detection
+### Run without Installing
 
-An RSS monitor workflow checks the upstream OpenCode GitHub releases feed. If a new version is found, it triggers the main update workflow via a `repository_dispatch` event.
+To run the latest version of OpenCode directly without adding it to your system profile, use:
 
-#### 2. Environment Setup
+```bash
+nix run github:bogorad/opencode-flake
+```
 
-The workflow runner prepares a build environment by installing Nix, the `nix-update` utility, and QEMU for cross-architecture emulation.
+### Run after Installing
 
-#### 3. Version Update
+If you have installed it using `nix profile install`, simply run the command:
 
-The `nix-update` command is executed to check the latest upstream version. If the upstream version is newer than the one defined in `package.nix`, the `version` attribute in the file is updated. The workflow proceeds regardless of whether a new version was found.
+```bash
+opencode
+```
 
-#### 4. Hash Reset
+---
 
-To ensure all hashes are recalculated, the workflow finds and replaces all hash values in `package.nix` with predefined dummy values. This applies to the following:
+## Automation
 
-- `src` hash (`fetchFromGitHub`)
-- `vendorHash` (`buildGoModule`)
-- `outputHash` for both `x86_64-linux` and `aarch64-linux` (`node_modules` derivation)
+### High-Level Overview
 
-#### 5. Native Build and Verification (`x86_64`)
+The repository uses a **two-workflow system** to achieve fully automated, multi-architecture updates for the OpenCode Nix package.
 
-The workflow enters a loop to resolve hashes for the native `x86_64` architecture:
+1.  **Detection Workflow (`rss-monitor.yml`):** A lightweight, frequently-run job that polls the official OpenCode release feed. Its only job is to detect a new version.
+2.  **Update Workflow (`update-opencode.yml`):** A heavy-duty, resource-intensive job that performs the actual update. It only runs when triggered by the detection workflow, saving significant CI resources.
 
-1.  It attempts to build the package using `nix build`. This command is expected to fail due to one of the dummy hashes.
-2.  The error output is parsed to extract the correct hash from the `got: ...` line.
-3.  The corresponding dummy hash in `package.nix` is replaced with the correct value.
-4.  This loop repeats, fixing one hash per iteration, until `nix build` completes successfully. A successful build serves as verification that all `x86_64`-related hashes are correct.
+---
 
-#### 6. Emulated Build and Hash Discovery (`aarch64`)
+### Detailed Automation Logic
 
-To determine the `aarch64` `outputHash`, a separate strategy is used to accommodate the slow performance of emulation:
+Here is a step-by-step breakdown of the entire process, based directly on the code in your repository.
 
-1.  The workflow executes `nix build --system aarch64-linux` a single time.
-2.  This command is expected to fail due to the remaining dummy hash for the `aarch64` architecture.
-3.  The error output is parsed to extract the correct hash from the `got: ...` line.
-4.  The `aarch64-linux` dummy hash in `package.nix` is replaced with this correct value. The step then concludes without a second, slow verification build.
+#### Phase 1: Version Detection (`rss-monitor.yml`)
 
-#### 7. Commit and Push
+This workflow runs every 15 minutes to ensure updates are caught quickly.
 
-Finally, the workflow saves the changes:
+1.  **Get Local Version:** It first reads the `version` attribute from the `package.nix` file to determine what version the repository currently provides.
+2.  **Get Remote Version:** It then fetches the official OpenCode GitHub releases RSS feed (`releases.atom`) and parses it to find the version number of the most recent release.
+3.  **Compare and Trigger:**
+    - If the local and remote versions match, the workflow prints a success message and exits.
+    - If a new version is detected, it does **not** perform the update itself. Instead, it makes an API call to GitHub, triggering a `repository_dispatch` event. This event acts as a signal to start the main update workflow, passing the new version number as part of the event.
 
-1.  It runs `git diff` to check if `package.nix` has been modified. If not, the job finishes.
-2.  If the file has changed, it creates a new Git commit.
-3.  It executes `git pull --rebase` to synchronize its local state with the remote branch, preventing push conflicts that could arise from long run times.
-4.  It pushes the new commit and the corresponding version tag to the `master` branch of the repository.
+#### Phase 2: The Update Process (`update-opencode.yml`)
 
-## Supported Systems
+This is the main workflow, triggered only when a new version is detected.
 
-- `aarch64-linux`
-- `x86_64-linux`
+1.  **Environment Setup:**
 
-## License
+    - The workflow checks out the repository code.
+    - It installs Nix, the `nix-update` utility, and **QEMU**, which is essential for emulating the `aarch64` architecture on an `x86_64` runner.
 
-MIT
+2.  **Version Update (`Step 1`):**
+
+    - It runs `nix-update --flake opencode`. This command automatically updates the `version` and source code `hash` in `package.nix` to match the latest upstream release.
+
+3.  **Unconditional Hash Reset (`Step 2`):**
+
+    - This is a critical step for predictability. The script **unconditionally erases all dependency hashes** (`vendorHash` for Go, and `outputHash` for both `x86_64` and `aarch64`) and replaces them with known dummy values (`AAAA...`, `BBBB...`, `CCCC...`).
+    - This "clean slate" approach ensures the subsequent steps run in a predictable, deterministic order, regardless of what state the file was in previously.
+
+4.  **Native Build & Verification Loop for `x86_64` (`Step 3`):**
+
+    - The workflow now enters the intelligent hash-fixing loop we refined earlier. It attempts to build the package for the native `x86_64` architecture.
+    - The build is expected to fail. The script correctly identifies _repairable_ failures (a hash mismatch, or a "No such file" error caused by a bad vendor hash).
+    - It extracts the correct hash from the `got: ...` line in the error log.
+    - It replaces the _first_ dummy hash it finds in `package.nix` (in the strict order of source, then vendor, then `x86_64` output hash).
+    - This loop repeats until `nix build` completes successfully. A successful build serves as **absolute verification** that all hashes for the `x86_64` architecture are correct.
+
+5.  **Emulated Hash Discovery for `aarch64` (`Step 4`):**
+
+    - Building under QEMU is extremely slow, so the workflow uses a more efficient "one-shot" strategy instead of a full verification loop.
+    - It runs `nix build --system aarch64-linux` just **once**. This build is expected to fail because the `aarch64` `outputHash` is still a dummy value.
+    - It parses the error log from this single failed run to extract the correct `aarch64` hash.
+    - It replaces the final dummy hash in `package.nix`.
+    - Crucially, it **does not** run a second, slow emulated build to verify. It trusts the hash provided by Nix's failure output, which is a safe and highly pragmatic optimization that saves enormous amounts of CI time.
+
+6.  **Commit and Push (`Step 5`):**
+    - The workflow first checks if `package.nix` was actually modified. If no new version was found and all hashes were already correct, the file will be unchanged, and the workflow exits peacefully.
+    - If the file has changed, it configures Git with a bot identity.
+    - It commits the updated `package.nix` with a descriptive message (e.g., `Update OpenCode to 0.16.0`).
+    - It runs `git pull --rebase` to prevent push conflicts if the remote `master` branch was changed during the long run of this workflow.
+    - Finally, it pushes the commit and a corresponding version tag back to the repository, making the new, fully-verified package available to all users.
