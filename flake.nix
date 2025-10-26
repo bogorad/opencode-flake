@@ -1,5 +1,5 @@
 {
-  description = "OpenCode - A powerful terminal-based AI assistant for developers";
+  description = "OpenCode - A terminal-based AI assistant for developers";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";

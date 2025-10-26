@@ -1,0 +1,27 @@
+--- a/packages/opencode/src/cli/cmd/tui.ts
++++ b/packages/opencode/src/cli/cmd/tui.ts
+@@ -20,12 +20,6 @@ declare global {
+   const OPENCODE_TUI_PATH: string
+ }
+ 
+-if (typeof OPENCODE_TUI_PATH !== "undefined") {
+-  await import(OPENCODE_TUI_PATH as string, {
+-    with: { type: "file" },
+-  })
+-}
+-
+ export const TuiCommand = cmd({
+   command: "$0 [project]",
+   describe: "start opencode tui",
+@@ -125,10 +119,7 @@ export const TuiCommand = cmd({
+           cmd = [binary]
+         }
+         if (!tui) {
+-          const dir = Bun.fileURLToPath(new URL("../../../../tui/cmd/opencode", import.meta.url))
+-          let binaryName = `./dist/tui${process.platform === "win32" ? ".exe" : ""}`
+-          await $`go build -o ${binaryName} ./main.go`.cwd(dir)
+-          cmd = [path.join(dir, binaryName)]
++          cmd = [OPENCODE_TUI_PATH as string]
+         }
+         Log.Default.info("tui", {
+           cmd,
