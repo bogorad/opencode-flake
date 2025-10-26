@@ -26,7 +26,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install nix-update
-        run: nix profile install github:Mic92/nix-update
+        run: nix profile add github:Mic92/nix-update
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -63,23 +63,71 @@ jobs:
           for ATTEMPT in $(seq 1 $MAX_ATTEMPTS); do
             echo "---"
             echo "Native Build Attempt $ATTEMPT/$MAX_ATTEMPTS"
-            BUILD_OUTPUT=$(nix build .#opencode -L 2>&1) || true
-            if ! echo "$BUILD_OUTPUT" | grep -qE "(error:|hash mismatch)"; then echo "✓ Native build successful! All x86_64 hashes are verified."; exit 0; fi
-            echo "Build failed as expected. Analyzing error..."
+
+            LOG=$(mktemp)
+            set -o pipefail
+            if nix build .#opencode -L 2> >(tee "$LOG" >&2); then
+              echo "✓ Native build successful! All x86_64 hashes are verified."
+              exit 0
+            fi
+            BUILD_OUTPUT=$(cat "$LOG")
+
+            EXPECTED_FAIL=0
+            # 1) Normal top-level hash mismatch is always repairable.
+            echo "$BUILD_OUTPUT" | grep -q 'hash mismatch' && EXPECTED_FAIL=1
+
+            # 2) Vendor FOD missing $out is repairable only if vendor dummy remains.
+            if grep -q 'vendorHash = "sha256-CCCC' package.nix; then
+              if echo "$BUILD_OUTPUT" | grep -q '/nix/store/.*-go-modules\.drv' && \
+                 echo "$BUILD_OUTPUT" | grep -q 'No such file or directory'; then
+                EXPECTED_FAIL=1
+              fi
+            fi
+
+            if [ $EXPECTED_FAIL -eq 0 ]; then
+              echo "✗ Non-repairable failure:"
+              echo "$BUILD_OUTPUT"
+              exit 1
+            fi
+
+            echo "Build failed in a fixable way. Extracting correct hash…"
+
+            # Try top-level got first.
             CORRECT_HASH=$(echo "$BUILD_OUTPUT" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
-            if [ -z "$CORRECT_HASH" ]; then echo "✗ Build failed for a reason other than hash mismatch."; echo "$BUILD_OUTPUT"; exit 1; fi
+
+            # Fallback: get vendor 'got:' from go-modules sub-derivation log.
+            if [ -z "$CORRECT_HASH" ]; then
+              SUBDRV=$(echo "$BUILD_OUTPUT" | grep -o '/nix/store/[^ ]*-go-modules\.drv' | head -1)
+              if [ -n "$SUBDRV" ]; then
+                MODLOG=$(nix log "$SUBDRV" 2>/dev/null || true)
+                CORRECT_HASH=$(echo "$MODLOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
+              fi
+            fi
+
+            if [ -z "$CORRECT_HASH" ]; then
+              echo "✗ No usable 'got:' hash found; tail of go-modules log (if any):"
+              [ -n "$MODLOG" ] && echo "$MODLOG" | tail -200 || true
+              exit 1
+            fi
+
             echo "→ Nix expects hash: $CORRECT_HASH"
-            if grep -q "sha256-AAAA" package.nix; then
+
+            # Replace placeholders in strict order to minimize cross-matches.
+            if grep -q 'hash = "sha256-AAAA' package.nix; then
               sed -i "s|sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=|$CORRECT_HASH|" package.nix
-            elif grep -q "x86_64-linux = \"sha256-BBBB" package.nix; then
+            elif grep -q 'vendorHash = "sha256-CCCC' package.nix; then
+              sed -i -E "s|(vendorHash = \")sha256-CCCC[^\"]*(\")|\1$CORRECT_HASH\2|" package.nix
+            elif grep -q 'x86_64-linux = "sha256-BBBB' package.nix; then
               sed -i -E "s|(x86_64-linux = \")sha256-BBBB[^\"]*(\")|\1$CORRECT_HASH\2|" package.nix
-            elif grep -q "sha256-CCCC" package.nix; then
-              sed -i "s|sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=|$CORRECT_HASH|" package.nix
             else
-              echo "✗ Native hash mismatch, but no known dummy hashes left for this arch."; exit 1
+              echo "✗ Got a hash but nothing to replace."
+              exit 1
             fi
           done
-          echo "✗ Failed to fix native hashes after $MAX_ATTEMPTS attempts."; exit 1
+
+          echo "✗ Failed to fix native hashes after $MAX_ATTEMPTS attempts."
+          exit 1
+
 
       - name: Step 4 - One-Shot Discovery for Emulated Arch aarch64-linux
         run: |

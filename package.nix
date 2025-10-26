@@ -27,33 +27,28 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     owner = "sst";
     repo = "opencode";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-yQfOgLJkSeBDTMS7MHuEQVzd8oG8EzQZRFYFHRO/08o=";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
   };
 
   tui = buildGoModule {
     pname = "opencode-tui";
     inherit (finalAttrs) version src;
-
+    nativeBuildInputs = [ writableTmpDirAsHomeHook ];
     modRoot = "packages/tui";
 
-    vendorHash = "sha256-g3+2q7yRaM6BgIs5oIXz/u7B84ZMMjnxXpvFpqDePU4=";
+    # Leave this to be overwritten by the workflow to an SRI dummy like sha256-CCCC...=
+    vendorHash = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";
 
+    proxyVendor = true;
     subPackages = [ "cmd/opencode" ];
-
     env.CGO_ENABLED = 0;
 
-    ldflags = [
-      "-s"
-      "-X=main.Version=${finalAttrs.version}"
-    ];
-
-    installPhase = ''
-      runHook preInstall
-
-      install -Dm755 $GOPATH/bin/opencode $out/bin/tui
-
-      runHook postInstall
-    '';
+    overrideModAttrs = (
+      _: {
+        GOPROXY = "https://proxy.golang.org,direct";
+        # Optional if Go workspaces misbehave: GOWORK = "off";
+      }
+    );
   };
 
   node_modules = stdenvNoCC.mkDerivation {
@@ -74,39 +69,27 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
     buildPhase = ''
       runHook preBuild
-
-       export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
-
-       # Disable post-install scripts to avoid shebang issues
-       bun install \
-         --filter=opencode \
-         --force \
-         --ignore-scripts \
-         --no-progress
-        # Remove `--frozen-lockfile` and `--production` — they erroneously report the lockfile needs updating even though `bun install` does not change it.
-         # Related to  https://github.com/oven-sh/bun/issues/19088
-         # --frozen-lockfile \
-         # --production
-
+      export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
+      bun install \
+        --filter=opencode \
+        --force \
+        --ignore-scripts \
+        --no-progress
       runHook postBuild
     '';
 
     installPhase = ''
       runHook preInstall
-
       mkdir -p $out/node_modules
       cp -R ./node_modules $out
-
       runHook postInstall
     '';
 
-    # Required else we get errors that our fixed-output derivation references store paths
     dontFixup = true;
-
     outputHash =
       {
-        x86_64-linux = "sha256-qvwsGBJmGQhH/zwIQwJlRwWE6n5zddjHfPD4l/O5RZU=";
-        aarch64-linux = "sha256-+nW6PpKV4EqauqyOv6zFzg/MFQznYHLhmLdGor8ic2g=";
+        x86_64-linux = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
+        aarch64-linux = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
@@ -120,16 +103,12 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   ];
 
   patches = [
-    # Patch `packages/opencode/src/provider/models-macro.ts` to get contents of
-    # `_api.json` from the file bundled with `bun build`.
     ./local-models-dev.patch
   ];
 
   configurePhase = ''
     runHook preConfigure
-
     cp -R ${finalAttrs.node_modules}/node_modules .
-
     runHook postConfigure
   '';
 
@@ -137,16 +116,14 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   buildPhase = ''
     runHook preBuild
-
     bun build \
-      --define OPENCODE_TUI_PATH="'${finalAttrs.tui}/bin/tui'" \
+      --define OPENCODE_TUI_PATH="'${finalAttrs.tui}/bin/opencode'" \
       --define OPENCODE_VERSION="'${finalAttrs.version}'" \
       --compile \
       --compile-exec-argv="--" \
       --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
       --outfile=opencode \
-      ./packages/opencode/src/index.ts \
-
+      ./packages/opencode/src/index.ts
     runHook postBuild
   '';
 
@@ -154,16 +131,10 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   installPhase = ''
     runHook preInstall
-
     install -Dm755 opencode $out/bin/opencode
-
     runHook postInstall
   '';
 
-  # Execution of commands using bash-tool fail on linux with
-  # Error [ERR_DLOPEN_FAILED]: libstdc++.so.6: cannot open shared object file: No such
-  # file or directory
-  # Thus, we add libstdc++.so.6 manually to LD_LIBRARY_PATH
   postFixup = ''
     wrapProgram $out/bin/opencode \
       --set LD_LIBRARY_PATH "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}"
