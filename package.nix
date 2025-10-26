@@ -27,7 +27,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     owner = "sst";
     repo = "opencode";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    hash = "sha256-yQfOgLJkSeBDTMS7MHuEQVzd8oG8EzQZRFYFHRO/08o=";
   };
 
   tui = buildGoModule {
@@ -37,7 +37,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     modRoot = "packages/tui";
 
     # Leave this to be overwritten by the workflow to an SRI dummy like sha256-CCCC...=
-    vendorHash = "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";
+    vendorHash = "sha256-CLi4wjjlnClvaD8j4SPEdzfEvHWTWTfS9zQnBHcCVZ0=";
 
     proxyVendor = true;
     subPackages = [ "cmd/opencode" ];
@@ -88,8 +88,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
     outputHash =
       {
-        x86_64-linux = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
-        aarch64-linux = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
+        x86_64-linux = "sha256-qvwsGBJmGQhH/zwIQwJlRwWE6n5zddjHfPD4l/O5RZU=";
+        aarch64-linux = "sha256-+nW6PpKV4EqauqyOv6zFzg/MFQznYHLhmLdGor8ic2g=";
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
