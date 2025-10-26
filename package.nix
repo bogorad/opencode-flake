@@ -26,7 +26,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   src = fetchFromGitHub {
     owner = "sst";
     repo = "opencode";
-    tag = "v${finalAttrs.version}";
+    rev = "v${finalAttrs.version}";
     hash = "sha256-yQfOgLJkSeBDTMS7MHuEQVzd8oG8EzQZRFYFHRO/08o=";
   };
 
@@ -69,12 +69,14 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
     buildPhase = ''
       runHook preBuild
-      export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
-      bun install \
-        --filter=opencode \
-        --force \
-        --ignore-scripts \
-        --no-progress
+      bun build \
+        --define OPENCODE_TUI_PATH='"${finalAttrs.tui}/bin/opencode"' \
+        --define OPENCODE_TUI_PATH_VERSION='"${finalAttrs.version}"' \
+        --compile \
+        --compile-exec-argv="--" \
+        --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
+        --outfile=opencode \
+        ./packages/opencode/src/index.ts
       runHook postBuild
     '';
 
@@ -104,6 +106,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   patches = [
     ./local-models-dev.patch
+    ./local-tui-spawn.patch
   ];
 
   configurePhase = ''
@@ -117,8 +120,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
     bun build \
-      --define OPENCODE_TUI_PATH="'${finalAttrs.tui}/bin/opencode'" \
-      --define OPENCODE_VERSION="'${finalAttrs.version}'" \
+      --define OPENCODE_TUI_PATH="\"${finalAttrs.tui}/bin/opencode\"" \
+      --define OPENCODE_TUI_PATH_VERSION="\"${finalAttrs.version}\"" \
       --compile \
       --compile-exec-argv="--" \
       --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
@@ -137,7 +140,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   postFixup = ''
     wrapProgram $out/bin/opencode \
-      --set LD_LIBRARY_PATH "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}"
+      --set LD_LIBRARY_PATH "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}" \
+      --set OPENCODE_TUI_PATH "${finalAttrs.tui}/bin/opencode"
   '';
 
   passthru = {

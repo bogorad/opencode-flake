@@ -2,10 +2,7 @@ name: Update OpenCode
 
 on:
   repository_dispatch:
-    types:
-      [
-        opencode-release-detected,
-      ]
+    types: [opencode-release-detected]
   workflow_dispatch:
 
 permissions:
@@ -19,14 +16,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Use a token that can trigger other workflows if needed
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Setup Nix
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install nix-update
-        run: nix profile add github:Mic92/nix-update
+        run: nix profile install nixpkgs#nix-update
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -36,130 +32,130 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Step 1 - Update Version String
+      - name: Step 1 - Update Version and Source Hash
         run: |
-          echo "▶ Checking for new version..."
+          echo "▶ Updating version with nix-update..."
           nix-update --flake opencode --version=auto || true
+          
           VERSION=$(grep -oP 'version = "\K[^"]+' package.nix | head -1)
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "✓ Version is set to: $VERSION"
+          echo "✓ Version set to: $VERSION"
+          
+          echo "▶ Constructing source URL..."
+          SRC_URL="https://github.com/sst/opencode/archive/refs/tags/v${VERSION}.tar.gz"
+          
+          echo "▶ Prefetching source hash..."
+          BASE32=$(nix-prefetch-url --unpack "$SRC_URL" --type sha256)
+          SRI=$(nix hash to-sri --type sha256 "$BASE32")
+          
+          echo "▶ Writing source hash to package.nix..."
+          sed -i -E "s|(hash = \")[^\"]*(\")|\\1$SRI\\2|" package.nix
+          echo "✓ Source hash updated: $SRI"
 
-      - name: Step 2 - Unconditionally Reset All Hashes
+      - name: Step 2 - Fix Go Vendor Hash
         run: |
-          echo "▶ Unconditionally resetting all hash types to dummy values..."
-          DUMMY_A="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+          echo "▶ Setting dummy vendorHash..."
           DUMMY_C="sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
-          sed -i -E "s/(hash = \").*(\")/\1$DUMMY_A\2/" package.nix
-          sed -i -E "s/(vendorHash = \").*(\")/\1$DUMMY_C\2/" package.nix
-          sed -i -E "s/(x86_64-linux = \").*(\")/\1$DUMMY_B\2/" package.nix
-          sed -i -E "s/(aarch64-linux = \").*(\")/\1$DUMMY_B\2/" package.nix
-          echo "✓ Dummy hashes have been set."
+          sed -i -E "s|(vendorHash = \")[^\"]*(\")|\\1$DUMMY_C\\2|" package.nix
+          
+          echo "▶ Building to discover correct vendorHash..."
+          BUILD_LOG=$(nix build .#opencode -L 2>&1) || true
+          
+          # First try to get hash from main build output
+          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
+          
+          # If not found, try to get it from go-modules sub-derivation
+          if [ -z "$CORRECT_HASH" ]; then
+            echo "▶ Checking go-modules sub-derivation..."
+            SUBDRV=$(echo "$BUILD_LOG" | grep -o '/nix/store/[^ ]*-go-modules\.drv' | head -1)
+            if [ -n "$SUBDRV" ]; then
+              MODLOG=$(nix log "$SUBDRV" 2>/dev/null || true)
+              CORRECT_HASH=$(echo "$MODLOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
+            fi
+          fi
+          
+          if [ -z "$CORRECT_HASH" ]; then
+            echo "✗ Failed to extract vendorHash"
+            echo "$BUILD_LOG" | tail -100
+            exit 1
+          fi
+          
+          echo "▶ Writing vendorHash to package.nix..."
+          sed -i -E "s|(vendorHash = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
+          echo "✓ Vendor hash updated: $CORRECT_HASH"
 
-      - name: Step 3 - Verification Loop for Native Arch x86_64-linux
+      - name: Step 3 - Fix x86_64-linux Output Hash
         run: |
-          echo "▶ Starting Verification Loop for Native (x86_64-linux)"
-          MAX_ATTEMPTS=4
-          for ATTEMPT in $(seq 1 $MAX_ATTEMPTS); do
-            echo "---"
-            echo "Native Build Attempt $ATTEMPT/$MAX_ATTEMPTS"
+          echo "▶ Setting dummy x86_64-linux outputHash..."
+          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+          sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$DUMMY_B\\2|" package.nix
+          
+          echo "▶ Building to discover correct x86_64-linux outputHash..."
+          BUILD_LOG=$(nix build .#opencode --system x86_64-linux -L 2>&1) || true
+          
+          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
+          
+          if [ -z "$CORRECT_HASH" ]; then
+            echo "✗ Failed to extract x86_64-linux hash"
+            echo "$BUILD_LOG" | tail -100
+            exit 1
+          fi
+          
+          echo "▶ Writing x86_64-linux outputHash to package.nix..."
+          sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
+          echo "✓ x86_64-linux hash updated: $CORRECT_HASH"
 
-            LOG=$(mktemp)
-            set -o pipefail
-            if nix build .#opencode -L 2> >(tee "$LOG" >&2); then
-              echo "✓ Native build successful! All x86_64 hashes are verified."
-              exit 0
-            fi
-            BUILD_OUTPUT=$(cat "$LOG")
-
-            EXPECTED_FAIL=0
-            # 1) Normal top-level hash mismatch is always repairable.
-            echo "$BUILD_OUTPUT" | grep -q 'hash mismatch' && EXPECTED_FAIL=1
-
-            # 2) Vendor FOD missing $out is repairable only if vendor dummy remains.
-            if grep -q 'vendorHash = "sha256-CCCC' package.nix; then
-              if echo "$BUILD_OUTPUT" | grep -q '/nix/store/.*-go-modules\.drv' && \
-                 echo "$BUILD_OUTPUT" | grep -q 'No such file or directory'; then
-                EXPECTED_FAIL=1
-              fi
-            fi
-
-            if [ $EXPECTED_FAIL -eq 0 ]; then
-              echo "✗ Non-repairable failure:"
-              echo "$BUILD_OUTPUT"
-              exit 1
-            fi
-
-            echo "Build failed in a fixable way. Extracting correct hash…"
-
-            # Try top-level got first.
-            CORRECT_HASH=$(echo "$BUILD_OUTPUT" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
-
-            # Fallback: get vendor 'got:' from go-modules sub-derivation log.
-            if [ -z "$CORRECT_HASH" ]; then
-              SUBDRV=$(echo "$BUILD_OUTPUT" | grep -o '/nix/store/[^ ]*-go-modules\.drv' | head -1)
-              if [ -n "$SUBDRV" ]; then
-                MODLOG=$(nix log "$SUBDRV" 2>/dev/null || true)
-                CORRECT_HASH=$(echo "$MODLOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
-              fi
-            fi
-
-            if [ -z "$CORRECT_HASH" ]; then
-              echo "✗ No usable 'got:' hash found; tail of go-modules log (if any):"
-              [ -n "$MODLOG" ] && echo "$MODLOG" | tail -200 || true
-              exit 1
-            fi
-
-            echo "→ Nix expects hash: $CORRECT_HASH"
-
-            # Replace placeholders in strict order to minimize cross-matches.
-            if grep -q 'hash = "sha256-AAAA' package.nix; then
-              sed -i "s|sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=|$CORRECT_HASH|" package.nix
-            elif grep -q 'vendorHash = "sha256-CCCC' package.nix; then
-              sed -i -E "s|(vendorHash = \")sha256-CCCC[^\"]*(\")|\1$CORRECT_HASH\2|" package.nix
-            elif grep -q 'x86_64-linux = "sha256-BBBB' package.nix; then
-              sed -i -E "s|(x86_64-linux = \")sha256-BBBB[^\"]*(\")|\1$CORRECT_HASH\2|" package.nix
-            else
-              echo "✗ Got a hash but nothing to replace."
-              exit 1
-            fi
-          done
-
-          echo "✗ Failed to fix native hashes after $MAX_ATTEMPTS attempts."
-          exit 1
-
-
-      - name: Step 4 - One-Shot Discovery for Emulated Arch aarch64-linux
+      - name: Step 4 - Fix aarch64-linux Output Hash
         run: |
-          echo "▶ Starting One-Shot Discovery for Emulated (aarch64-linux) hash"
-          BUILD_OUTPUT=$(nix build .#opencode --system aarch64-linux -L 2>&1) || true
-          if ! echo "$BUILD_OUTPUT" | grep -q "hash mismatch"; then echo "✓ Emulated build did not fail with a hash mismatch. Assuming aarch64 hash is already correct."; exit 0; fi
-          echo "Build failed as expected. Extracting the correct hash..."
-          CORRECT_HASH=$(echo "$BUILD_OUTPUT" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
-          if [ -z "$CORRECT_HASH" ]; then echo "✗ Emulated build failed for a reason other than hash mismatch."; echo "$BUILD_OUTPUT"; exit 1; fi
-          echo "→ Nix expects hash: $CORRECT_HASH"
-          echo "  Replacing aarch64-linux outputHash..."
-          sed -i -E "s|(aarch64-linux = \")sha256-BBBB[^\"]*(\")|\1$CORRECT_HASH\2|" package.nix
-          echo "✓ aarch64 hash discovered and written successfully."
+          echo "▶ Setting dummy aarch64-linux outputHash..."
+          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+          sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$DUMMY_B\\2|" package.nix
+          
+          echo "▶ Building to discover correct aarch64-linux outputHash (emulated)..."
+          BUILD_LOG=$(nix build .#opencode --system aarch64-linux -L 2>&1) || true
+          
+          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
+          
+          if [ -z "$CORRECT_HASH" ]; then
+            echo "✗ Failed to extract aarch64-linux hash"
+            echo "$BUILD_LOG" | tail -100
+            exit 1
+          fi
+          
+          echo "▶ Writing aarch64-linux outputHash to package.nix..."
+          sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
+          echo "✓ aarch64-linux hash updated: $CORRECT_HASH"
 
-      - name: Step 5 - Commit and Push if Changes Exist
+      - name: Step 5 - Verification Build (x86_64)
+        run: |
+          echo "▶ Performing final verification build for x86_64-linux..."
+          nix build .#opencode --system x86_64-linux -L
+          echo "✓ x86_64-linux package builds successfully"
+
+      - name: Step 6 - Commit and Push Changes
         run: |
           echo "▶ Checking for changes to package.nix..."
-          # Use `git diff --quiet` to see if the file has actually changed.
           if ! git diff --quiet package.nix; then
             echo "✓ Changes detected. Committing and pushing..."
             git add package.nix
-            git commit -m "Update OpenCode to ${{ env.VERSION }}" -m "Automated hash verification for x86_64 and aarch64"
+            git commit -m "Update OpenCode to ${{ env.VERSION }}" \
+              -m "Automated hash updates for all architectures" \
+              -m "- Source hash verified" \
+              -m "- Go vendor hash verified" \
+              -m "- x86_64-linux output hash verified" \
+              -m "- aarch64-linux output hash verified"
+            
             git tag -f "v${{ env.VERSION }}"
-
-            echo "▶ Synchronizing with remote branch before pushing..."
-            # Pull with rebase to handle potential race conditions where the remote branch was updated
-            # during the workflow run. This avoids merge conflicts for this linear update.
+            
+            echo "▶ Synchronizing with remote branch..."
             git pull origin master --rebase
-
+            
             echo "▶ Pushing changes to remote..."
             git push origin HEAD:master
             git push -f origin "v${{ env.VERSION }}"
+            
+            echo "✓ Update complete!"
           else
             echo "✓ No changes to package.nix. Repository is already up-to-date."
           fi
+
