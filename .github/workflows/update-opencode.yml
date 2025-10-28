@@ -55,7 +55,29 @@ jobs:
           sed -i -E "s|(hash = \")[^\"]*(\")|\\1$SRI\\2|" package.nix
           echo "✓ Source hash updated: $SRI"
 
-      - name: Step 2 - Fix node_modules x86_64-linux Output Hash
+      - name: Step 2 - Fix Go Vendor Hash
+        run: |
+          echo "▶ Setting dummy vendorHash..."
+          DUMMY_VENDOR="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          sed -i -E "s|vendorHash = \"[^\"]*\"|vendorHash = \"$DUMMY_VENDOR\"|" package.nix
+
+          echo "▶ Building TUI to discover correct vendorHash..."
+          BUILD_LOG=$(nix build .#opencode.tui --system x86_64-linux -L 2>&1) || true
+
+          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | tail -1)
+
+          if [ -z "$CORRECT_HASH" ]; then
+            echo "✗ Failed to extract vendorHash"
+            echo "Last 100 lines of build log:"
+            echo "$BUILD_LOG" | tail -100
+            exit 1
+          fi
+
+          echo "▶ Writing correct vendorHash to package.nix..."
+          sed -i -E "s|vendorHash = \"$DUMMY_VENDOR\"|vendorHash = \"$CORRECT_HASH\"|" package.nix
+          echo "✓ Vendor hash updated: $CORRECT_HASH"
+
+      - name: Step 3 - Fix node_modules x86_64-linux Output Hash
         run: |
           echo "▶ Setting dummy x86_64-linux node_modules outputHash..."
           DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
@@ -76,7 +98,7 @@ jobs:
           sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
           echo "✓ x86_64-linux node_modules hash updated: $CORRECT_HASH"
 
-      - name: Step 3 - Fix node_modules aarch64-linux Output Hash
+      - name: Step 4 - Fix node_modules aarch64-linux Output Hash
         run: |
           echo "▶ Setting dummy aarch64-linux node_modules outputHash..."
           DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
@@ -97,31 +119,9 @@ jobs:
           sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
           echo "✓ aarch64-linux node_modules hash updated: $CORRECT_HASH"
 
-      - name: Step 4 - Fix Go Vendor Hash
+      - name: Step 5 - Verification Build
         run: |
-          echo "▶ Setting a deliberately wrong vendorHash..."
-          sed -i -E 's|vendorHash = "sha256-[A-Za-z0-9+/=]+"|vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="|' package.nix
-
-          echo "▶ Attempting build to discover correct vendorHash..."
-          BUILD_LOG=$(nix build .#opencode -L 2>&1) || true
-
-          echo "▶ Extracting correct hash from error..."
-          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | tail -1)
-
-          if [ -z "$CORRECT_HASH" ]; then
-            echo "✗ Failed to extract vendorHash from build log"
-            echo "Last 100 lines of output:"
-            echo "$BUILD_LOG" | tail -100
-            exit 1
-          fi
-
-          echo "▶ Updating package.nix with correct hash..."
-          sed -i -E "s|vendorHash = \"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"|vendorHash = \"$CORRECT_HASH\"|" package.nix
-          echo "✓ Vendor hash updated: $CORRECT_HASH"
-
-      - name: Step 5 - Verification Build (x86_64)
-        run: |
-          echo "▶ Running final verification build..."
+          echo "▶ Running final verification build for x86_64-linux..."
           nix build .#opencode --system x86_64-linux -L
           echo "✓ Build successful - all hashes are correct!"
 
@@ -134,8 +134,8 @@ jobs:
             git commit -m "Update OpenCode to ${{ env.VERSION }}" \
               -m "Automated hash updates for all architectures" \
               -m "- Source hash verified" \
-              -m "- Node modules hashes verified (x86_64 & aarch64)" \
-              -m "- Go vendor hash verified"
+              -m "- Go vendor hash verified" \
+              -m "- Node modules hashes verified (x86_64 & aarch64)"
             
             git tag -f "v${{ env.VERSION }}"
             
