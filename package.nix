@@ -36,7 +36,6 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     nativeBuildInputs = [ writableTmpDirAsHomeHook ];
     modRoot = "packages/tui";
 
-    # Leave this to be overwritten by the workflow to an SRI dummy like sha256-CCCC...=
     vendorHash = "sha256-CLi4wjjlnClvaD8j4SPEdzfEvHWTWTfS9zQnBHcCVZ0=";
 
     proxyVendor = true;
@@ -46,7 +45,6 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     overrideModAttrs = (
       _: {
         GOPROXY = "https://proxy.golang.org,direct";
-        # Optional if Go workspaces misbehave: GOWORK = "off";
       }
     );
   };
@@ -69,14 +67,12 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
     buildPhase = ''
       runHook preBuild
-      bun build \
-        --define OPENCODE_TUI_PATH='"${finalAttrs.tui}/bin/opencode"' \
-        --define OPENCODE_TUI_PATH_VERSION='"${finalAttrs.version}"' \
-        --compile \
-        --compile-exec-argv="--" \
-        --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
-        --outfile=opencode \
-        ./packages/opencode/src/index.ts
+      export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
+      bun install \
+        --filter=opencode \
+        --force \
+        --ignore-scripts \
+        --no-progress
       runHook postBuild
     '';
 
@@ -120,8 +116,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
     bun build \
-      --define OPENCODE_TUI_PATH="\"${finalAttrs.tui}/bin/opencode\"" \
-      --define OPENCODE_TUI_PATH_VERSION="\"${finalAttrs.version}\"" \
+      --define OPENCODE_TUI_PATH='"${finalAttrs.tui}/bin/opencode"' \
+      --define OPENCODE_TUI_PATH_VERSION='"${finalAttrs.version}"' \
       --compile \
       --compile-exec-argv="--" \
       --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
