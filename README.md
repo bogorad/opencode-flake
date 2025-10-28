@@ -68,41 +68,42 @@ This workflow runs every 15 minutes to ensure updates are caught quickly.
 
 #### Phase 2: The Update Process (`update-opencode.yml`)
 
-This is the main workflow, triggered only when a new version is detected.
+This is the main workflow, triggered only when a new version is detected. It sequentially corrects each required hash.
 
 1.  **Environment Setup:**
-
     - The workflow checks out the repository code.
     - It installs Nix, the `nix-update` utility, and **QEMU**, which is essential for emulating the `aarch64` architecture on an `x86_64` runner.
 
-2.  **Version Update (`Step 1`):**
+2.  **Step 1: Update Version and Source Hash:**
+    - The script first runs `nix-update` to automatically update the `version` attribute in `package.nix`.
+    - It then manually prefetches the source code tarball corresponding to the new version using `nix-prefetch-url` to get the correct content hash.
+    - Finally, it uses `sed` to replace the old `hash` in `package.nix` with the new, correct one.
 
-    - It runs `nix-update --flake opencode`. This command automatically updates the `version` and source code `hash` in `package.nix` to match the latest upstream release.
+3.  **Step 2: Fix Go Vendor Hash:**
+    - The `vendorHash` for the Go-based TUI is reset to a known dummy value (e.g., `sha256-AAAA...`).
+    - The script attempts to build *only* the TUI component (`.#opencode.tui`). This build is guaranteed to fail due to the hash mismatch.
+    - It parses the correct hash from the `got: ...` line in the Nix error output.
+    - It uses `sed` to replace the dummy vendor hash with the correct one.
 
-3.  **Unconditional Hash Reset (`Step 2`):**
+4.  **Step 3: Fix `x86_64` Node.js Modules Hash:**
+    - The process is repeated for the `node_modules` dependency for the `x86_64-linux` architecture.
+    - The `outputHash` is set to a dummy value (`sha256-BBBB...`).
+    - It attempts a full build for `x86_64-linux`, which fails as expected.
+    - It parses the correct hash from the error log and writes it to `package.nix`.
 
-    - This is a critical step for predictability. The script **unconditionally erases all dependency hashes** (`vendorHash` for Go, and `outputHash` for both `x86_64` and `aarch64`) and replaces them with known dummy values (`AAAA...`, `BBBB...`, `CCCC...`).
-    - This "clean slate" approach ensures the subsequent steps run in a predictable, deterministic order, regardless of what state the file was in previously.
+5.  **Step 4: Fix `aarch64` Node.js Modules Hash:**
+    - The same hash-fixing logic is applied to the `aarch64-linux` architecture, running under QEMU emulation.
+    - The `aarch64-linux` `outputHash` is replaced with a dummy value.
+    - It runs an emulated build, which fails.
+    - It parses the correct hash from the output and updates the file. This "one-shot" approach avoids a second, time-consuming emulated build.
 
-4.  **Native Build & Verification Loop for `x86_64` (`Step 3`):**
+6.  **Step 5: Verification Build:**
+    - With all hashes now believed to be correct, the workflow runs a final `nix build .#opencode --system x86_64-linux` command.
+    - This build is expected to succeed. Its successful completion serves as **absolute verification** that the package is now correct for the native architecture.
 
-    - The workflow now enters the intelligent hash-fixing loop we refined earlier. It attempts to build the package for the native `x86_64` architecture.
-    - The build is expected to fail. The script correctly identifies _repairable_ failures (a hash mismatch, or a "No such file" error caused by a bad vendor hash).
-    - It extracts the correct hash from the `got: ...` line in the error log.
-    - It replaces the _first_ dummy hash it finds in `package.nix` (in the strict order of source, then vendor, then `x86_64` output hash).
-    - This loop repeats until `nix build` completes successfully. A successful build serves as **absolute verification** that all hashes for the `x86_64` architecture are correct.
-
-5.  **Emulated Hash Discovery for `aarch64` (`Step 4`):**
-
-    - Building under QEMU is extremely slow, so the workflow uses a more efficient "one-shot" strategy instead of a full verification loop.
-    - It runs `nix build --system aarch64-linux` just **once**. This build is expected to fail because the `aarch64` `outputHash` is still a dummy value.
-    - It parses the error log from this single failed run to extract the correct `aarch64` hash.
-    - It replaces the final dummy hash in `package.nix`.
-    - Crucially, it **does not** run a second, slow emulated build to verify. It trusts the hash provided by Nix's failure output, which is a safe and highly pragmatic optimization that saves enormous amounts of CI time.
-
-6.  **Commit and Push (`Step 5`):**
-    - The workflow first checks if `package.nix` was actually modified. If no new version was found and all hashes were already correct, the file will be unchanged, and the workflow exits peacefully.
+7.  **Step 6: Commit and Push:**
+    - The workflow checks if `package.nix` was actually modified. If all hashes were already correct, the file will be unchanged, and the workflow exits.
     - If the file has changed, it configures Git with a bot identity.
     - It commits the updated `package.nix` with a descriptive message (e.g., `Update OpenCode to 0.16.0`).
-    - It runs `git pull --rebase` to prevent push conflicts if the remote `master` branch was changed during the long run of this workflow.
-    - Finally, it pushes the commit and a corresponding version tag back to the repository, making the new, fully-verified package available to all users.
+    - It runs `git pull --rebase` to prevent push conflicts, then pushes the commit and a corresponding version tag back to the repository.
+
