@@ -36,7 +36,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     nativeBuildInputs = [ writableTmpDirAsHomeHook ];
     modRoot = "packages/tui";
 
-    vendorHash = "sha256-CLi4wjjlnClvaD8j4SPEdzfEvHWTWTfS9zQnBHcCVZ0=";
+    vendorHash = "sha256-g3+2q7yRaM6BgIs5oIXz/u7B84ZMMjnxXpvFpqDePU4=";
 
     # proxyVendor = true;
     subPackages = [ "cmd/opencode" ];
