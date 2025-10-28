@@ -1,24 +1,27 @@
-diff --git a/packages/opencode/src/cli/cmd/tui.ts b/packages/opencode/src/cli/cmd/tui.ts
-index b936f54..93fe6f8 100644
 --- a/packages/opencode/src/cli/cmd/tui.ts
 +++ b/packages/opencode/src/cli/cmd/tui.ts
-@@ -1,3 +1,4 @@
-+import { spawn } from "bun"
- import { Global } from "../../global"
- import { Provider } from "../../provider/provider"
- import { Server } from "../../server/server"
-@@ -221,3 +222,14 @@ function getOpencodeCommand(): string[] {
-   // In production, use the current executable path
-   return [process.execPath]
+@@ -20,12 +20,6 @@ declare global {
+   const OPENCODE_TUI_PATH: string
  }
-+
-+// Nix-injected TUI launcher
-+export async function runTui(args: string[] = []) {
-+  const bin = OPENCODE_TUI_PATH as string
-+  const p = spawn([bin, ...args], {
-+    stdio: ["inherit", "inherit", "inherit"],
-+    env: { ...process.env },
-+  })
-+  const code = await p.exited
-+  if (code !== 0) throw new Error(`tui exited with code ${code}`)
-+}
+ 
+-if (typeof OPENCODE_TUI_PATH !== "undefined") {
+-  await import(OPENCODE_TUI_PATH as string, {
+-    with: { type: "file" },
+-  })
+-}
+-
+ export const TuiCommand = cmd({
+   command: "$0 [project]",
+   describe: "start opencode tui",
+@@ -125,10 +119,7 @@ export const TuiCommand = cmd({
+           cmd = [binary]
+         }
+         if (!tui) {
+-          const dir = Bun.fileURLToPath(new URL("../../../../tui/cmd/opencode", import.meta.url))
+-          let binaryName = `./dist/tui${process.platform === "win32" ? ".exe" : ""}`
+-          await $`go build -o ${binaryName} ./main.go`.cwd(dir)
+-          cmd = [path.join(dir, binaryName)]
++          cmd = [OPENCODE_TUI_PATH as string]
+         }
+         Log.Default.info("tui", {
+           cmd,

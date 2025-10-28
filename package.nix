@@ -22,12 +22,12 @@ let
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "opencode";
-  version = "0.15.18";
+  version = "0.15.19";
   src = fetchFromGitHub {
     owner = "sst";
     repo = "opencode";
     rev = "v${finalAttrs.version}";
-    hash = "sha256-yQfOgLJkSeBDTMS7MHuEQVzd8oG8EzQZRFYFHRO/08o=";
+    hash = "sha256-2q/PvOrdNLjlPMlW5PD4seZQDxQ3gza+Ol8OTraRSaI=";
   };
 
   tui = buildGoModule {
@@ -38,9 +38,15 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
     vendorHash = "sha256-CLi4wjjlnClvaD8j4SPEdzfEvHWTWTfS9zQnBHcCVZ0=";
 
-    proxyVendor = true;
+    # proxyVendor = true;
     subPackages = [ "cmd/opencode" ];
     env.CGO_ENABLED = 0;
+
+    ldflags = [
+      "-s"
+      "-w"
+      "-X=main.Version=${finalAttrs.version}"
+    ];
 
     overrideModAttrs = (
       _: {
@@ -86,8 +92,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
     outputHash =
       {
-        x86_64-linux = "sha256-qvwsGBJmGQhH/zwIQwJlRwWE6n5zddjHfPD4l/O5RZU=";
-        aarch64-linux = "sha256-+nW6PpKV4EqauqyOv6zFzg/MFQznYHLhmLdGor8ic2g=";
+        x86_64-linux = "sha256-0EUQ5/4Ldb92Bo+eOdHEfFn/YZ2U1iP2ATATepLR7tE=";
+        aarch64-linux = "sha256-pkNUhVg0yul03nDy9y4XDdBHNaPDirhSNJ3NP+l1ExI=";
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
@@ -117,7 +123,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preBuild
     bun build \
       --define OPENCODE_TUI_PATH='"${finalAttrs.tui}/bin/opencode"' \
-      --define OPENCODE_TUI_PATH_VERSION='"${finalAttrs.version}"' \
+      --define OPENCODE_VERSION='"${finalAttrs.version}"' \
       --compile \
       --compile-exec-argv="--" \
       --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \

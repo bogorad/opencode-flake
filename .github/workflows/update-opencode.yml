@@ -25,7 +25,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install nix-update
-        run: nix profile install nixpkgs#nix-update
+        run: nix profile add nixpkgs#nix-update
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -99,41 +99,31 @@ jobs:
 
       - name: Step 4 - Fix Go Vendor Hash
         run: |
-          echo "▶ Setting dummy vendorHash..."
-          DUMMY_C="sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
-          sed -i -E "s|(vendorHash = \")[^\"]*(\")|\\1$DUMMY_C\\2|" package.nix
+          echo "▶ Setting a deliberately wrong vendorHash..."
+          sed -i -E 's|vendorHash = "sha256-[A-Za-z0-9+/=]+"|vendorHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="|' package.nix
 
-          echo "▶ Building to discover correct vendorHash..."
+          echo "▶ Attempting build to discover correct vendorHash..."
           BUILD_LOG=$(nix build .#opencode -L 2>&1) || true
 
-          # First try to get hash from main build output
-          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
-
-          # If not found, try to get it from go-modules sub-derivation
-          if [ -z "$CORRECT_HASH" ]; then
-            echo "▶ Checking go-modules sub-derivation..."
-            SUBDRV=$(echo "$BUILD_LOG" | grep -o '/nix/store/[^ ]*-go-modules\.drv' | head -1)
-            if [ -n "$SUBDRV" ]; then
-              MODLOG=$(nix log "$SUBDRV" 2>/dev/null || true)
-              CORRECT_HASH=$(echo "$MODLOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
-            fi
-          fi
+          echo "▶ Extracting correct hash from error..."
+          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | tail -1)
 
           if [ -z "$CORRECT_HASH" ]; then
-            echo "✗ Failed to extract vendorHash"
+            echo "✗ Failed to extract vendorHash from build log"
+            echo "Last 100 lines of output:"
             echo "$BUILD_LOG" | tail -100
             exit 1
           fi
 
-          echo "▶ Writing vendorHash to package.nix..."
-          sed -i -E "s|(vendorHash = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
+          echo "▶ Updating package.nix with correct hash..."
+          sed -i -E "s|vendorHash = \"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"|vendorHash = \"$CORRECT_HASH\"|" package.nix
           echo "✓ Vendor hash updated: $CORRECT_HASH"
 
       - name: Step 5 - Verification Build (x86_64)
         run: |
-          echo "▶ Performing final verification build for x86_64-linux..."
+          echo "▶ Running final verification build..."
           nix build .#opencode --system x86_64-linux -L
-          echo "✓ x86_64-linux package builds successfully"
+          echo "✓ Build successful - all hashes are correct!"
 
       - name: Step 6 - Commit and Push Changes
         run: |
