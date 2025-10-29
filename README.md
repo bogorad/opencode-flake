@@ -39,6 +39,18 @@ If you have installed it using `nix profile install`, simply run the command:
 opencode
 ```
 
+### Use with flakes (do not follow nixpkgs)
+
+```nix
+inputs =  [
+  opencode-flake.url = "github:bogorad/opencode-flake";
+];
+  environment.systemPackages =
+[
+  inputs.opencode-flake.packages.${pkgs.system}.default
+];
+```
+
 ---
 
 ## Automation
@@ -71,33 +83,39 @@ This workflow runs every 15 minutes to ensure updates are caught quickly.
 This is the main workflow, triggered only when a new version is detected. It sequentially corrects each required hash.
 
 1.  **Environment Setup:**
+
     - The workflow checks out the repository code.
     - It installs Nix, the `nix-update` utility, and **QEMU**, which is essential for emulating the `aarch64` architecture on an `x86_64` runner.
 
 2.  **Step 1: Update Version and Source Hash:**
+
     - The script first runs `nix-update` to automatically update the `version` attribute in `package.nix`.
     - It then manually prefetches the source code tarball corresponding to the new version using `nix-prefetch-url` to get the correct content hash.
     - Finally, it uses `sed` to replace the old `hash` in `package.nix` with the new, correct one.
 
 3.  **Step 2: Fix Go Vendor Hash:**
+
     - The `vendorHash` for the Go-based TUI is reset to a known dummy value (e.g., `sha256-AAAA...`).
-    - The script attempts to build *only* the TUI component (`.#opencode.tui`). This build is guaranteed to fail due to the hash mismatch.
+    - The script attempts to build _only_ the TUI component (`.#opencode.tui`). This build is guaranteed to fail due to the hash mismatch.
     - It parses the correct hash from the `got: ...` line in the Nix error output.
     - It uses `sed` to replace the dummy vendor hash with the correct one.
 
 4.  **Step 3: Fix `x86_64` Node.js Modules Hash:**
+
     - The process is repeated for the `node_modules` dependency for the `x86_64-linux` architecture.
     - The `outputHash` is set to a dummy value (`sha256-BBBB...`).
     - It attempts a full build for `x86_64-linux`, which fails as expected.
     - It parses the correct hash from the error log and writes it to `package.nix`.
 
 5.  **Step 4: Fix `aarch64` Node.js Modules Hash:**
+
     - The same hash-fixing logic is applied to the `aarch64-linux` architecture, running under QEMU emulation.
     - The `aarch64-linux` `outputHash` is replaced with a dummy value.
     - It runs an emulated build, which fails.
     - It parses the correct hash from the output and updates the file. This "one-shot" approach avoids a second, time-consuming emulated build.
 
 6.  **Step 5: Verification Build:**
+
     - With all hashes now believed to be correct, the workflow runs a final `nix build .#opencode --system x86_64-linux` command.
     - This build is expected to succeed. Its successful completion serves as **absolute verification** that the package is now correct for the native architecture.
 
@@ -107,3 +125,6 @@ This is the main workflow, triggered only when a new version is detected. It seq
     - It commits the updated `package.nix` with a descriptive message (e.g., `Update OpenCode to 0.16.0`).
     - It runs `git pull --rebase` to prevent push conflicts, then pushes the commit and a corresponding version tag back to the repository.
 
+```
+
+```
