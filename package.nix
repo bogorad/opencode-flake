@@ -111,8 +111,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
 
-    # Create a complete tsconfig.json override that fixes both
-    # the JSX transform and ALL path alias resolutions.
+    # Create a tsconfig override to fix JSX and path aliases
     cat > tsconfig.build.json <<EOF
     {
       "compilerOptions": {
@@ -128,6 +127,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     }
     EOF
 
+    # Build the main entry point AND the worker as separate entry points
     bun build \
       --define OPENCODE_TUI_PATH='"${finalAttrs.tui}/bin/opencode"' \
       --define OPENCODE_VERSION='"${finalAttrs.version}"' \
@@ -136,7 +136,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
       --outfile=opencode \
       --tsconfig-override tsconfig.build.json \
-      ./packages/opencode/src/index.ts
+      ./packages/opencode/src/index.ts \
+      ./packages/opencode/src/cli/cmd/tui/worker.ts
     runHook postBuild
   '';
 
