@@ -1,27 +1,41 @@
---- a/packages/opencode/src/cli/cmd/tui.ts
-+++ b/packages/opencode/src/cli/cmd/tui.ts
-@@ -20,12 +20,6 @@ declare global {
-   const OPENCODE_TUI_PATH: string
- }
+diff --git a/a/packages/opencode/src/cli/cmd/tui/thread.ts b/packages/opencode/src/cli/cmd/tui/thread.ts
+index 66a22bf9..19bf30dd 100644
+--- a/a/packages/opencode/src/cli/cmd/tui/thread.ts
++++ b/packages/opencode/src/cli/cmd/tui/thread.ts
+@@ -2,6 +2,7 @@ import { cmd } from "@/cli/cmd/cmd"
+ import { tui } from "./app"
+ import { Rpc } from "@/util/rpc"
+ import { type rpc } from "./worker"
++import { Server } from "../../../server/server"
+ import { upgrade } from "@/cli/upgrade"
+ import { Session } from "@/session"
+ import { bootstrap } from "@/cli/bootstrap"
+@@ -82,6 +83,28 @@ export const TuiThreadCommand = cmd({
+         return undefined
+       })()
  
--if (typeof OPENCODE_TUI_PATH !== "undefined") {
--  await import(OPENCODE_TUI_PATH as string, {
--    with: { type: "file" },
--  })
--}
--
- export const TuiCommand = cmd({
-   command: "$0 [project]",
-   describe: "start opencode tui",
-@@ -125,10 +119,7 @@ export const TuiCommand = cmd({
-           cmd = [binary]
-         }
-         if (!tui) {
--          const dir = Bun.fileURLToPath(new URL("../../../../tui/cmd/opencode", import.meta.url))
--          let binaryName = `./dist/tui${process.platform === "win32" ? ".exe" : ""}`
--          await $`go build -o ${binaryName} ./main.go`.cwd(dir)
--          cmd = [path.join(dir, binaryName)]
-+          cmd = [OPENCODE_TUI_PATH as string]
-         }
-         Log.Default.info("tui", {
-           cmd,
++      if (typeof OPENCODE_TUI_PATH !== "undefined" && OPENCODE_TUI_PATH) {
++        const server = Server.listen({
++          port: 0,
++          hostname: "127.0.0.1",
++        })
++
++        const proc = Bun.spawn({
++          cmd: [OPENCODE_TUI_PATH],
++          cwd,
++          stdout: "inherit",
++          stderr: "inherit",
++          stdin: "inherit",
++          env: {
++            ...process.env,
++            OPENCODE_SERVER: server.url.toString(),
++          },
++          onExit: () => server.stop(),
++        })
++
++        await proc.exited
++        return
++      }
+       const worker = new Worker("./src/cli/cmd/tui/worker.ts")
+       worker.onerror = console.error
+       const client = Rpc.client<typeof rpc>(worker)

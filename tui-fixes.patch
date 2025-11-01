@@ -1,0 +1,15 @@
+--- a/packages/opencode/src/cli/cmd/tui/thread.ts
++++ b/packages/opencode/src/cli/cmd/tui/thread.ts
+@@ -82,6 +82,12 @@ export const TuiThreadCommand = cmd({
+         return undefined
+       })()
+ 
++      if (typeof OPENCODE_TUI_PATH !== "undefined" && OPENCODE_TUI_PATH) {
++        const { spawn } = await import("bun")
++        const proc = spawn([OPENCODE_TUI_PATH], { cwd })
++        await proc.exited
++        return
++      }
+       const worker = new Worker("./src/cli/cmd/tui/worker.ts")
+       worker.onerror = console.error
+       const client = Rpc.client<typeof rpc>(worker)
