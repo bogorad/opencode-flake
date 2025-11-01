@@ -1,6 +1,6 @@
 # OpenCode Nix Flake/Package
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[
 This repository provides a Nix flake for installing **[OpenCode](https://github.com/sst/opencode)**, a powerful terminal-based AI coding agent.
 
 The primary goal of this flake is to provide a reliable and **continuously updated** package for the Nix ecosystem.
@@ -10,13 +10,14 @@ The primary goal of this flake is to provide a reliable and **continuously updat
 - **Fully Automated:** A GitHub Action runs on a schedule to check for new upstream releases.
 - **Always Up-to-Date:** When a new version of OpenCode is released, this flake automatically updates the version, fetches the new source code, and corrects all dependency hashes.
 - **Reproducible:** Built with Nix for perfect, bit-for-bit reproducibility.
+- **Robust Build Process:** The Nix build includes critical overrides to handle complex TypeScript and JSX configurations, ensuring reliable builds across updates.
 
 ## Installation
 
 To install OpenCode using this flake, ensure you have [Nix with flakes enabled](https://nixos.wiki/wiki/Flakes#Enable_flakes) and run the following command:
 
 ```bash
-nix profile add github:bogorad/opencode-flake
+nix profile install github:bogorad/opencode-flake
 ```
 
 The `opencode` command will then be available in your shell.
@@ -39,16 +40,21 @@ If you have installed it using `nix profile install`, simply run the command:
 opencode
 ```
 
-### Use with flakes (do not follow nixpkgs)
+### Use with Flakes
+
+To include this package in your own NixOS or home-manager configuration:
 
 ```nix
-inputs =  [
-  opencode-flake.url = "github:bogorad/opencode-flake";
-];
-  environment.systemPackages =
-[
-  inputs.opencode-flake.packages.${pkgs.system}.default
-];
+{
+  inputs.opencode-flake.url = "github:bogorad/opencode-flake";
+
+  outputs = { self, nixpkgs, opencode-flake }: {
+    # In your NixOS configuration
+    environment.systemPackages = [
+      opencode-flake.packages.${pkgs.system}.default
+    ];
+  };
+}
 ```
 
 ---
@@ -66,7 +72,7 @@ The repository uses a **two-workflow system** to achieve fully automated, multi-
 
 ### Detailed Automation Logic
 
-Here is a step-by-step breakdown of the entire process, based directly on the code in your repository.
+Here is a step-by-step breakdown of the entire process, based on the code in the repository.
 
 #### Phase 1: Version Detection (`rss-monitor.yml`)
 
@@ -76,55 +82,42 @@ This workflow runs every 15 minutes to ensure updates are caught quickly.
 2.  **Get Remote Version:** It then fetches the official OpenCode GitHub releases RSS feed (`releases.atom`) and parses it to find the version number of the most recent release.
 3.  **Compare and Trigger:**
     - If the local and remote versions match, the workflow prints a success message and exits.
-    - If a new version is detected, it does **not** perform the update itself. Instead, it makes an API call to GitHub, triggering a `repository_dispatch` event. This event acts as a signal to start the main update workflow, passing the new version number as part of the event.
+    - If a new version is detected, it makes an API call to GitHub, triggering a `repository_dispatch` event. This event signals the main update workflow to start, passing the new version number as part of the event.
 
 #### Phase 2: The Update Process (`update-opencode.yml`)
 
-This is the main workflow, triggered only when a new version is detected. It sequentially corrects each required hash.
+This is the main workflow, triggered only when a new version is detected. It sequentially corrects each required hash for the new version.
 
 1.  **Environment Setup:**
 
     - The workflow checks out the repository code.
-    - It installs Nix, the `nix-update` utility, and **QEMU**, which is essential for emulating the `aarch64` architecture on an `x86_64` runner.
+    - It installs Nix, the `nix-update` utility, and **QEMU** (for emulating the `aarch64` architecture on an `x86_64` runner).
 
 2.  **Step 1: Update Version and Source Hash:**
 
-    - The script first runs `nix-update` to automatically update the `version` attribute in `package.nix`.
-    - It then manually prefetches the source code tarball corresponding to the new version using `nix-prefetch-url` to get the correct content hash.
-    - Finally, it uses `sed` to replace the old `hash` in `package.nix` with the new, correct one.
+    - The script runs `nix-update` to automatically update the `version` attribute in `package.nix`.
+    - It then manually prefetches the source code tarball for the new version using `nix-prefetch-url` to get the correct content hash.
+    - It uses `sed` to replace the old `hash` in `package.nix` with the new one.
 
 3.  **Step 2: Fix Go Vendor Hash:**
 
     - The `vendorHash` for the Go-based TUI is reset to a known dummy value (e.g., `sha256-AAAA...`).
     - The script attempts to build _only_ the TUI component (`.#opencode.tui`). This build is guaranteed to fail due to the hash mismatch.
-    - It parses the correct hash from the `got: ...` line in the Nix error output.
-    - It uses `sed` to replace the dummy vendor hash with the correct one.
+    - It parses the correct hash from the `got: ...` line in the Nix error output and writes it back into `package.nix`.
 
-4.  **Step 3: Fix `x86_64` Node.js Modules Hash:**
+4.  **Step 3 & 4: Fix Node.js Modules Hashes (for `x86_64` and `aarch64`):**
 
-    - The process is repeated for the `node_modules` dependency for the `x86_64-linux` architecture.
-    - The `outputHash` is set to a dummy value (`sha256-BBBB...`).
-    - It attempts a full build for `x86_64-linux`, which fails as expected.
-    - It parses the correct hash from the error log and writes it to `package.nix`.
+    - The same process is repeated for the `node_modules` dependency for both `x86_64-linux` and `aarch64-linux` architectures.
+    - The `outputHash` for each architecture is set to a dummy value (`sha256-BBBB...`).
+    - An architecture-specific build is attempted, which fails as expected.
+    - The correct hash is parsed from the error log and written to `package.nix`.
 
-5.  **Step 4: Fix `aarch64` Node.js Modules Hash:**
+5.  **Step 5: Verification Build with Overrides:**
 
-    - The same hash-fixing logic is applied to the `aarch64-linux` architecture, running under QEMU emulation.
-    - The `aarch64-linux` `outputHash` is replaced with a dummy value.
-    - It runs an emulated build, which fails.
-    - It parses the correct hash from the output and updates the file. This "one-shot" approach avoids a second, time-consuming emulated build.
+    - With all hashes now correct, the workflow runs a final `nix build` command.
+    - **Crucially**, this build step uses a dynamically generated `tsconfig.build.json` inside the Nix derivation. This override file forces the correct SolidJS JSX transform and configures all necessary path aliases (`@/*` and `@tui/*`), ensuring the `bun` build tool can correctly compile the project regardless of any conflicting configurations in the upstream source code.
+    - The build's success serves as **absolute verification** that all hashes and build configurations are correct.
 
-6.  **Step 5: Verification Build:**
-
-    - With all hashes now believed to be correct, the workflow runs a final `nix build .#opencode --system x86_64-linux` command.
-    - This build is expected to succeed. Its successful completion serves as **absolute verification** that the package is now correct for the native architecture.
-
-7.  **Step 6: Commit and Push:**
-    - The workflow checks if `package.nix` was actually modified. If all hashes were already correct, the file will be unchanged, and the workflow exits.
-    - If the file has changed, it configures Git with a bot identity.
-    - It commits the updated `package.nix` with a descriptive message (e.g., `Update OpenCode to 0.16.0`).
+6.  **Step 6: Commit and Push:**
+    - If `package.nix` has been modified, the workflow commits the changes with a descriptive message (e.g., `Update OpenCode to 1.0.8`).
     - It runs `git pull --rebase` to prevent push conflicts, then pushes the commit and a corresponding version tag back to the repository.
-
-```
-
-```

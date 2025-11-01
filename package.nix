@@ -22,7 +22,7 @@ let
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "opencode";
-  version = "1.0.2";
+  version = "1.0.7";
   src = fetchFromGitHub {
     owner = "sst";
     repo = "opencode";
@@ -35,19 +35,14 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     inherit (finalAttrs) version src;
     nativeBuildInputs = [ writableTmpDirAsHomeHook ];
     modRoot = "packages/tui";
-
     vendorHash = "sha256-muwry7B0GlgueV8+9pevAjz3Cg3MX9AMr+rBwUcQ9CM=";
-
-    # proxyVendor = true;
     subPackages = [ "cmd/opencode" ];
     env.CGO_ENABLED = 0;
-
     ldflags = [
       "-s"
       "-w"
       "-X=main.Version=${finalAttrs.version}"
     ];
-
     overrideModAttrs = (
       _: {
         GOPROXY = "https://proxy.golang.org,direct";
@@ -58,19 +53,15 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   node_modules = stdenvNoCC.mkDerivation {
     pname = "opencode-node_modules";
     inherit (finalAttrs) version src;
-
     impureEnvVars = lib.fetchers.proxyImpureEnvVars ++ [
       "GIT_PROXY_COMMAND"
       "SOCKS_SERVER"
     ];
-
     nativeBuildInputs = [
       bun
       writableTmpDirAsHomeHook
     ];
-
     dontConfigure = true;
-
     buildPhase = ''
       runHook preBuild
       export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
@@ -81,14 +72,12 @@ stdenvNoCC.mkDerivation (finalAttrs: {
         --no-progress
       runHook postBuild
     '';
-
     installPhase = ''
       runHook preInstall
       mkdir -p $out/node_modules
       cp -R ./node_modules $out
       runHook postInstall
     '';
-
     dontFixup = true;
     outputHash =
       {
@@ -121,6 +110,24 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   buildPhase = ''
     runHook preBuild
+
+    # Create a complete tsconfig.json override that fixes both
+    # the JSX transform and ALL path alias resolutions.
+    cat > tsconfig.build.json <<EOF
+    {
+      "compilerOptions": {
+        "jsx": "preserve",
+        "jsxImportSource": "solid-js",
+        "allowImportingTsExtensions": true,
+        "baseUrl": ".",
+        "paths": {
+          "@/*": ["./packages/opencode/src/*"],
+          "@tui/*": ["./packages/opencode/src/cli/cmd/tui/*"]
+        }
+      }
+    }
+    EOF
+
     bun build \
       --define OPENCODE_TUI_PATH='"${finalAttrs.tui}/bin/opencode"' \
       --define OPENCODE_VERSION='"${finalAttrs.version}"' \
@@ -128,6 +135,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       --compile-exec-argv="--" \
       --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
       --outfile=opencode \
+      --tsconfig-override tsconfig.build.json \
       ./packages/opencode/src/index.ts
     runHook postBuild
   '';

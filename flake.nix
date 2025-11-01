@@ -49,7 +49,9 @@
         {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              self.packages.${system}.opencode
+              # self.packages.${system}.opencode
+              bun
+              nodePackages.node-gyp-build
             ];
           };
         }
