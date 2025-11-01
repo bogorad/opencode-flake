@@ -22,12 +22,12 @@ let
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "opencode";
-  version = "1.0.9";
+  version = "1.0.10";
   src = fetchFromGitHub {
     owner = "sst";
     repo = "opencode";
     rev = "v${finalAttrs.version}";
-    hash = "sha256-LC0DdYqoKrKAqeeya7OC7gdQnL7zGqnyYsCwJOhtEx8=";
+    hash = "sha256-l/Kya14CC7awP0Kbvdo/aOQfEebpArygjx4EaYETNSA=";
   };
 
   tui = buildGoModule {
@@ -80,8 +80,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
     outputHash =
       {
-        x86_64-linux = "sha256-Tfl2fRCWAUcKh9IID8Q30QIyt2rklYXNY4Praa+S3JA=";
-        aarch64-linux = "sha256-zOfttkOmUAlqLUE+IvwVAgWdSEF39GztCzVGteZ0GCA=";
+        x86_64-linux = "sha256-BsBIexYcewz8Te0vl3eRApI+wuU7EGsljJ6cwJ2LUvk=";
+        aarch64-linux = "sha256-gqmLnO0aukYhGVUgAhVfOkUrZyqv9eT5PM1SS1R2Spw=";
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
