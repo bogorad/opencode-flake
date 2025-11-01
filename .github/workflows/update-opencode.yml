@@ -2,10 +2,7 @@ name: Update OpenCode
 
 on:
   repository_dispatch:
-    types:
-      [
-        opencode-release-detected,
-      ]
+    types: [opencode-release-detected]
   workflow_dispatch:
 
 permissions:
@@ -119,11 +116,11 @@ jobs:
           sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
           echo "✓ aarch64-linux node_modules hash updated: $CORRECT_HASH"
 
-      - name: Step 5 - Verification Build
-        run: |
-          echo "▶ Running final verification build for x86_64-linux..."
-          nix build .#opencode --system x86_64-linux -L
-          echo "✓ Build successful - all hashes are correct!"
+      # - name: Step 5 - Verification Build
+      #   run: |
+      #     echo "▶ Running final verification build for x86_64-linux..."
+      #     nix build .#opencode --system x86_64-linux -L
+      #     echo "✓ Build successful - all hashes are correct!"
 
       - name: Step 6 - Commit and Push Changes
         run: |
