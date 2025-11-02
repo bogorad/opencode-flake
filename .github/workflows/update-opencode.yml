@@ -137,18 +137,37 @@ jobs:
           echo "Build successful."
 
       - name: Step 6 - Commit and Push Changes
+        env:
+          PERSONAL_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          DEFAULT_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
           echo "Checking for changes to package.nix..."
-          if ! git diff --quiet package.nix; then
-            git add package.nix
-            git commit -m "Update OpenCode to ${{ env.VERSION }}" \
-              -m "Automated hash updates for all architectures"
-
-            git tag -f "v${{ env.VERSION }}"
-
-            git pull origin master --rebase
-            git push origin HEAD:master
-            git push -f origin "v${{ env.VERSION }}"
-          else
+          if git diff --quiet package.nix; then
             echo "No changes detected. Repository is already up to date."
+            exit 0
           fi
+
+          git add package.nix
+          git commit -m "Update OpenCode to ${{ env.VERSION }}" \
+            -m "Automated hash updates for all architectures"
+
+          git tag -f "v${{ env.VERSION }}"
+
+          TOKEN="$PERSONAL_TOKEN"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="$DEFAULT_TOKEN"
+          fi
+          if [ -z "$TOKEN" ]; then
+            echo "No token available for pushing changes."
+            exit 1
+          fi
+
+          git config credential.helper store
+          trap 'rm -f ~/.git-credentials' EXIT
+          printf 'https://x-access-token:%s@github.com\n' "$TOKEN" > ~/.git-credentials
+
+          git pull --rebase origin master
+          git push origin HEAD:master
+          git push -f origin "v${{ env.VERSION }}"
