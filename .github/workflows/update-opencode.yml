@@ -1,8 +1,8 @@
 name: Update OpenCode
 
 on:
-  repository_dispatch:
-    types: [opencode-release-detected]
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       version:
@@ -20,32 +20,74 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if update needed (scheduled runs only)
+        id: version_check
+        if: github.event_name == 'schedule'
+        run: |
+          echo "▶ Checking if update is needed..."
+
+          # Get local version
+          LOCAL_VERSION=$(grep -oP 'version = "\K[^"]+' package.nix | head -1)
+          if [[ -z "$LOCAL_VERSION" ]]; then
+            echo "✗ Failed to parse local version from package.nix."
+            exit 1
+          fi
+          echo "✓ Local package version: $LOCAL_VERSION"
+
+          # Get latest version from RSS feed
+          LATEST_VERSION=$(curl -sL https://github.com/sst/opencode/releases.atom | \
+            grep -oP '<title>\K[^<]+' | \
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | \
+            head -1 | \
+            sed 's/^v//')
+
+          if [[ ! "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "✗ Failed to parse a valid version from RSS feed. Found: '$LATEST_VERSION'"
+            exit 1
+          fi
+          echo "✓ Latest version from RSS: $LATEST_VERSION"
+
+          # Compare versions
+          if [[ "$LOCAL_VERSION" == "$LATEST_VERSION" ]]; then
+            echo "✓ Versions match (v$LOCAL_VERSION). No update needed."
+            echo "skip_update=true" >> $GITHUB_OUTPUT
+          else
+            echo "New version detected! Upstream is $LATEST_VERSION, local is $LOCAL_VERSION."
+            echo "skip_update=false" >> $GITHUB_OUTPUT
+            echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          fi
 
       - name: Setup Nix
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install nix-update
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: nix profile add nixpkgs#nix-update
 
       - name: Set up QEMU
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Configure Git
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Step 1 - Update Version and Source Hash
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         env:
-          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          RSS_VERSION: ${{ steps.version_check.outputs.version }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
 
           VERSION="${INPUT_VERSION:-}"
           if [ -z "$VERSION" ]; then
-            VERSION="${DISPATCH_VERSION:-}"
+            VERSION="${RSS_VERSION:-}"
           fi
           if [ -z "$VERSION" ]; then
             VERSION=$(curl -sSfL https://api.github.com/repos/sst/opencode/releases/latest | jq -r '.tag_name // ""' | sed 's/^v//')
@@ -71,6 +113,7 @@ jobs:
           sed -i -E "s|(version = \")[^\"]*(\")|\\1$VERSION\\2|" package.nix
 
       - name: Step 2 - Fix Go Vendor Hash
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           echo "Setting dummy vendorHash..."
           DUMMY_VENDOR="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -91,6 +134,7 @@ jobs:
           echo "vendorHash updated: $CORRECT_HASH"
 
       - name: Step 3 - Fix node_modules x86_64-linux Output Hash
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           echo "Setting dummy x86_64-linux node_modules outputHash..."
           DUMMY="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
@@ -111,6 +155,7 @@ jobs:
           echo "x86_64-linux node_modules hash updated: $CORRECT_HASH"
 
       - name: Step 4 - Fix node_modules aarch64-linux Output Hash
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           echo "Setting dummy aarch64-linux node_modules outputHash..."
           DUMMY="sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
@@ -131,15 +176,14 @@ jobs:
           echo "aarch64-linux node_modules hash updated: $CORRECT_HASH"
 
       - name: Step 5 - Verification Build
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           echo "Running final verification build for x86_64-linux..."
           nix build .#opencode --system x86_64-linux -L
           echo "Build successful."
 
       - name: Step 6 - Commit and Push Changes
-        env:
-          PERSONAL_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-          DEFAULT_TOKEN: ${{ github.token }}
+        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           set -euo pipefail
 
@@ -154,19 +198,6 @@ jobs:
             -m "Automated hash updates for all architectures"
 
           git tag -f "v${{ env.VERSION }}"
-
-          TOKEN="$PERSONAL_TOKEN"
-          if [ -z "$TOKEN" ]; then
-            TOKEN="$DEFAULT_TOKEN"
-          fi
-          if [ -z "$TOKEN" ]; then
-            echo "No token available for pushing changes."
-            exit 1
-          fi
-
-          git config credential.helper store
-          trap 'rm -f ~/.git-credentials' EXIT
-          printf 'https://x-access-token:%s@github.com\n' "$TOKEN" > ~/.git-credentials
 
           git pull --rebase origin master
           git push origin HEAD:master
