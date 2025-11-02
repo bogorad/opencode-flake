@@ -33,14 +33,13 @@ jobs:
         id: remote
         run: |
           echo "▶ Fetching latest version from OpenCode RSS feed..."
-          # Fetch the feed, find the first entry, get its title, extract the content,
-          # strip the leading 'v', and trim whitespace.
+          # Fetch the feed, extract all titles, filter for semantic versions,
+          # take the first match (latest), and strip the leading 'v'.
           LATEST_VERSION=$(curl -sL https://github.com/sst/opencode/releases.atom | \
-            grep -A 10 '<entry>' | \
-            grep -m 1 '<title>' | \
-            sed 's/.*<title>\(.*\)<\/title>.*/\1/' | \
-            sed 's/^v//' | \
-            xargs)
+            grep -oP '<title>\K[^<]+' | \
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | \
+            head -1 | \
+            sed 's/^v//')
 
           if [[ ! "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "✗ Failed to parse a valid version from the RSS feed. Found: '$LATEST_VERSION'"
