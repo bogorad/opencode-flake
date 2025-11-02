@@ -2,11 +2,12 @@ name: Update OpenCode
 
 on:
   repository_dispatch:
-    types:
-      [
-        opencode-release-detected,
-      ]
+    types: [opencode-release-detected]
   workflow_dispatch:
+    inputs:
+      version:
+        description: Semver version to update to (optional)
+        required: false
 
 permissions:
   contents: write
@@ -36,117 +37,118 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Step 1 - Update Version and Source Hash
+        env:
+          DISPATCH_VERSION: ${{ github.event.client_payload.version }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          echo "▶ Updating version with nix-update..."
-          nix-update --flake opencode --version=auto || true
+          set -euo pipefail
 
-          VERSION=$(grep -oP 'version = "\K[^"]+' package.nix | head -1)
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "✓ Version set to: $VERSION"
+          VERSION="${INPUT_VERSION:-}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${DISPATCH_VERSION:-}"
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION=$(curl -sSfL https://api.github.com/repos/sst/opencode/releases/latest | jq -r '.tag_name // ""' | sed 's/^v//')
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "Failed to determine target version."
+            exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Target version '$VERSION' is not a semantic version (x.y.z)."
+            exit 1
+          fi
 
-          echo "▶ Constructing source URL..."
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Using version $VERSION"
+
+          nix-update --flake opencode --version "$VERSION" || true
+
           SRC_URL="https://github.com/sst/opencode/archive/refs/tags/v${VERSION}.tar.gz"
-
-          echo "▶ Prefetching source hash..."
           BASE32=$(nix-prefetch-url --unpack "$SRC_URL" --type sha256)
           SRI=$(nix hash convert --hash-algo sha256 --to sri "$BASE32")
-
-          echo "▶ Writing source hash to package.nix..."
           sed -i -E "s|(hash = \")[^\"]*(\")|\\1$SRI\\2|" package.nix
-          echo "✓ Source hash updated: $SRI"
+          sed -i -E "s|(version = \")[^\"]*(\")|\\1$VERSION\\2|" package.nix
 
       - name: Step 2 - Fix Go Vendor Hash
         run: |
-          echo "▶ Setting dummy vendorHash..."
+          echo "Setting dummy vendorHash..."
           DUMMY_VENDOR="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
           sed -i -E "s|vendorHash = \"[^\"]*\"|vendorHash = \"$DUMMY_VENDOR\"|" package.nix
 
-          echo "▶ Building TUI to discover correct vendorHash..."
+          echo "Building TUI to discover correct vendorHash..."
           BUILD_LOG=$(nix build .#opencode.tui --system x86_64-linux -L 2>&1) || true
 
           CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | tail -1)
 
           if [ -z "$CORRECT_HASH" ]; then
-            echo "✗ Failed to extract vendorHash"
-            echo "Last 100 lines of build log:"
+            echo "Failed to extract vendorHash"
             echo "$BUILD_LOG" | tail -100
             exit 1
           fi
 
-          echo "▶ Writing correct vendorHash to package.nix..."
           sed -i -E "s|vendorHash = \"$DUMMY_VENDOR\"|vendorHash = \"$CORRECT_HASH\"|" package.nix
-          echo "✓ Vendor hash updated: $CORRECT_HASH"
+          echo "vendorHash updated: $CORRECT_HASH"
 
       - name: Step 3 - Fix node_modules x86_64-linux Output Hash
         run: |
-          echo "▶ Setting dummy x86_64-linux node_modules outputHash..."
-          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
-          sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$DUMMY_B\\2|" package.nix
+          echo "Setting dummy x86_64-linux node_modules outputHash..."
+          DUMMY="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+          sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$DUMMY\\2|" package.nix
 
-          echo "▶ Building node_modules to discover correct x86_64-linux outputHash..."
+          echo "Building node_modules to discover correct x86_64-linux outputHash..."
           BUILD_LOG=$(nix build .#opencode --system x86_64-linux -L 2>&1) || true
 
           CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
 
           if [ -z "$CORRECT_HASH" ]; then
-            echo "✗ Failed to extract x86_64-linux node_modules hash"
+            echo "Failed to extract x86_64-linux node_modules hash"
             echo "$BUILD_LOG" | tail -100
             exit 1
           fi
 
-          echo "▶ Writing x86_64-linux outputHash to package.nix..."
           sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
-          echo "✓ x86_64-linux node_modules hash updated: $CORRECT_HASH"
+          echo "x86_64-linux node_modules hash updated: $CORRECT_HASH"
 
       - name: Step 4 - Fix node_modules aarch64-linux Output Hash
         run: |
-          echo "▶ Setting dummy aarch64-linux node_modules outputHash..."
-          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
-          sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$DUMMY_B\\2|" package.nix
+          echo "Setting dummy aarch64-linux node_modules outputHash..."
+          DUMMY="sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
+          sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$DUMMY\\2|" package.nix
 
-          echo "▶ Building node_modules to discover correct aarch64-linux outputHash (emulated)..."
+          echo "Building node_modules to discover correct aarch64-linux outputHash..."
           BUILD_LOG=$(nix build .#opencode --system aarch64-linux -L 2>&1) || true
 
           CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
 
           if [ -z "$CORRECT_HASH" ]; then
-            echo "✗ Failed to extract aarch64-linux node_modules hash"
+            echo "Failed to extract aarch64-linux node_modules hash"
             echo "$BUILD_LOG" | tail -100
             exit 1
           fi
 
-          echo "▶ Writing aarch64-linux outputHash to package.nix..."
           sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
-          echo "✓ aarch64-linux node_modules hash updated: $CORRECT_HASH"
+          echo "aarch64-linux node_modules hash updated: $CORRECT_HASH"
 
       - name: Step 5 - Verification Build
         run: |
-          echo "▶ Running final verification build for x86_64-linux..."
+          echo "Running final verification build for x86_64-linux..."
           nix build .#opencode --system x86_64-linux -L
-          echo "✓ Build successful - all hashes are correct!"
+          echo "Build successful."
 
       - name: Step 6 - Commit and Push Changes
         run: |
-          echo "▶ Checking for changes to package.nix..."
+          echo "Checking for changes to package.nix..."
           if ! git diff --quiet package.nix; then
-            echo "✓ Changes detected. Committing and pushing..."
             git add package.nix
             git commit -m "Update OpenCode to ${{ env.VERSION }}" \
-              -m "Automated hash updates for all architectures" \
-              -m "- Source hash verified" \
-              -m "- Go vendor hash verified" \
-              -m "- Node modules hashes verified (x86_64 & aarch64)"
-            
+              -m "Automated hash updates for all architectures"
+
             git tag -f "v${{ env.VERSION }}"
-            
-            echo "▶ Synchronizing with remote branch..."
+
             git pull origin master --rebase
-            
-            echo "▶ Pushing changes to remote..."
             git push origin HEAD:master
             git push -f origin "v${{ env.VERSION }}"
-            
-            echo "✓ Update complete!"
           else
-            echo "✓ No changes to package.nix. Repository is already up-to-date."
+            echo "No changes detected. Repository is already up to date."
           fi
