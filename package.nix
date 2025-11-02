@@ -66,7 +66,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       runHook preBuild
       export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
       bun install \
-        --force \
+        --frozen-lockfile \
         --ignore-scripts \
         --no-progress
       runHook postBuild
@@ -85,8 +85,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
     outputHash =
       {
-        x86_64-linux = "sha256-Tfl2fRCWAUcKh9IID8Q30QIyt2rklYXNY4Praa+S3JA=";
-        aarch64-linux = "sha256-rAaFaD07OYi4obGPCo4k/cAt4oNNfIYWIzJFV68aEhM=";
+        x86_64-linux = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        aarch64-linux = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
