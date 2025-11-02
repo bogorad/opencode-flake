@@ -22,12 +22,12 @@ let
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "opencode";
-  version = "1.0.9";
+  version = "1.0.10";
   src = fetchFromGitHub {
     owner = "sst";
     repo = "opencode";
     rev = "v${finalAttrs.version}";
-    hash = "sha256-LC0DdYqoKrKAqeeya7OC7gdQnL7zGqnyYsCwJOhtEx8=";
+    hash = "sha256-l/Kya14CC7awP0Kbvdo/aOQfEebpArygjx4EaYETNSA=";
   };
 
   tui = buildGoModule {
@@ -73,8 +73,13 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     '';
     installPhase = ''
       runHook preInstall
-      mkdir -p $out/node_modules
-      cp -R ./node_modules $out
+      mkdir -p $out
+      while IFS= read -r dir; do
+        rel="''${dir#./}"
+        dest="$out/$rel"
+        mkdir -p "$(dirname "$dest")"
+        cp -R "$dir" "$dest"
+      done < <(find . -type d -name node_modules -prune)
       runHook postInstall
     '';
     dontFixup = true;
@@ -101,7 +106,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   configurePhase = ''
     runHook preConfigure
-    cp -R ${finalAttrs.node_modules}/node_modules .
+    cp -R ${finalAttrs.node_modules}/. .
     runHook postConfigure
   '';
 
