@@ -112,28 +112,7 @@ jobs:
           sed -i -E "s|(hash = \")[^\"]*(\")|\\1$SRI\\2|" package.nix
           sed -i -E "s|(version = \")[^\"]*(\")|\\1$VERSION\\2|" package.nix
 
-      - name: Step 2 - Fix Go Vendor Hash
-        if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
-        run: |
-          echo "Setting dummy vendorHash..."
-          DUMMY_VENDOR="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-          sed -i -E "s|vendorHash = \"[^\"]*\"|vendorHash = \"$DUMMY_VENDOR\"|" package.nix
-
-          echo "Building TUI to discover correct vendorHash..."
-          BUILD_LOG=$(nix build .#opencode.tui --system x86_64-linux -L 2>&1) || true
-
-          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | tail -1)
-
-          if [ -z "$CORRECT_HASH" ]; then
-            echo "Failed to extract vendorHash"
-            echo "$BUILD_LOG" | tail -100
-            exit 1
-          fi
-
-          sed -i -E "s|vendorHash = \"$DUMMY_VENDOR\"|vendorHash = \"$CORRECT_HASH\"|" package.nix
-          echo "vendorHash updated: $CORRECT_HASH"
-
-      - name: Step 3 - Fix node_modules x86_64-linux Output Hash
+      - name: Step 2 - Fix node_modules x86_64-linux Output Hash
         if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           echo "Setting dummy x86_64-linux node_modules outputHash..."
@@ -154,7 +133,7 @@ jobs:
           sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
           echo "x86_64-linux node_modules hash updated: $CORRECT_HASH"
 
-      - name: Step 4 - Fix node_modules aarch64-linux Output Hash
+      - name: Step 3 - Fix node_modules aarch64-linux Output Hash
         if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           echo "Setting dummy aarch64-linux node_modules outputHash..."
@@ -175,14 +154,14 @@ jobs:
           sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
           echo "aarch64-linux node_modules hash updated: $CORRECT_HASH"
 
-      - name: Step 5 - Verification Build
+      - name: Step 4 - Verification Build
         if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           echo "Running final verification build for x86_64-linux..."
           nix build .#opencode --system x86_64-linux -L
           echo "Build successful."
 
-      - name: Step 6 - Commit and Push Changes
+      - name: Step 5 - Commit and Push Changes
         if: github.event_name != 'schedule' || steps.version_check.outputs.skip_update != 'true'
         run: |
           set -euo pipefail

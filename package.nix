@@ -2,7 +2,6 @@
   lib,
   stdenv,
   stdenvNoCC,
-  buildGoModule,
   bun,
   fetchFromGitHub,
   makeBinaryWrapper,
@@ -22,32 +21,12 @@ let
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "opencode";
-  version = "1.0.13";
+  version = "1.0.15";
   src = fetchFromGitHub {
     owner = "sst";
     repo = "opencode";
     rev = "v${finalAttrs.version}";
-    hash = "sha256-P4o0erYPZPceOktYy5d/xMRzo5CNOQNf6EGAazTzNiw=";
-  };
-
-  tui = buildGoModule {
-    pname = "opencode-tui";
-    inherit (finalAttrs) version src;
-    nativeBuildInputs = [ writableTmpDirAsHomeHook ];
-    modRoot = "packages/tui";
-    vendorHash = "sha256-muwry7B0GlgueV8+9pevAjz3Cg3MX9AMr+rBwUcQ9CM=";
-    subPackages = [ "cmd/opencode" ];
-    env.CGO_ENABLED = 0;
-    ldflags = [
-      "-s"
-      "-w"
-      "-X=main.Version=${finalAttrs.version}"
-    ];
-    overrideModAttrs = (
-      _: {
-        GOPROXY = "https://proxy.golang.org,direct";
-      }
-    );
+    hash = "sha256-2iZOw6oOrmzIKWdCe+nLjpWtRyS4YDmafjfALwWgYtE=";
   };
 
   node_modules = stdenvNoCC.mkDerivation {
@@ -131,7 +110,6 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     EOF
 
     bun build \
-      --define OPENCODE_TUI_PATH='"${finalAttrs.tui}/bin/opencode"' \
       --define OPENCODE_VERSION='"${finalAttrs.version}"' \
       --compile \
       --compile-exec-argv="--" \
@@ -154,8 +132,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   postFixup = ''
     wrapProgram $out/bin/opencode \
-      --set LD_LIBRARY_PATH "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}" \
-      --set OPENCODE_TUI_PATH "${finalAttrs.tui}/bin/opencode"
+      --set LD_LIBRARY_PATH "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}"
   '';
 
   passthru = {
@@ -166,8 +143,6 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     };
     updateScript = nix-update-script {
       extraArgs = [
-        "--subpackage"
-        "tui"
         "--subpackage"
         "node_modules"
       ];
