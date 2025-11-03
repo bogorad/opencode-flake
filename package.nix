@@ -81,6 +81,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   patches = [
     ./local-models-dev.patch
     ./local-tui-spawn.patch
+    ./local-sdk-baseurl.patch
   ];
 
   configurePhase = ''
@@ -94,11 +95,11 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   buildPhase = ''
     runHook preBuild
 
-    cat > tsconfig.build.json <<EOF
+    cat > tsconfig.build.json <<'EOF'
     {
       "compilerOptions": {
         "jsx": "preserve",
-        "jsxImportSource": "solid-js",
+        "jsxImportSource": "@opentui/solid",
         "allowImportingTsExtensions": true,
         "baseUrl": ".",
         "paths": {
@@ -109,15 +110,55 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     }
     EOF
 
-    bun build \
-      --define OPENCODE_VERSION='"${finalAttrs.version}"' \
-      --compile \
-      --compile-exec-argv="--" \
-      --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
-      --outfile=opencode \
-      --tsconfig-override tsconfig.build.json \
-      ./packages/opencode/src/index.ts \
-      ./packages/opencode/src/cli/cmd/tui/worker.ts
+    cat > bun-build.ts <<'EOF'
+    import solidPlugin from "./packages/opencode/node_modules/@opentui/solid/scripts/solid-plugin"
+    import path from "path"
+    import fs from "fs"
+
+    const version = "@VERSION@"
+    const channel = "@CHANNEL@"
+    const repoRoot = process.cwd()
+    const packageDir = path.join(repoRoot, "packages/opencode")
+    const parserWorker = fs.realpathSync(
+      path.join(packageDir, "node_modules/@opentui/core/parser.worker.js"),
+    )
+    const relativeWorker = path.relative(packageDir, parserWorker)
+    const target = process.env["BUN_COMPILE_TARGET"]
+
+    if (!target) {
+      throw new Error("BUN_COMPILE_TARGET not set")
+    }
+
+    await Bun.build({
+      conditions: ["browser"],
+      tsconfig: "./tsconfig.build.json",
+      plugins: [solidPlugin],
+      sourcemap: "external",
+      entrypoints: [
+        path.join(packageDir, "src/index.ts"),
+        parserWorker,
+        path.join(packageDir, "src/cli/cmd/tui/worker.ts"),
+      ],
+      define: {
+        OPENCODE_VERSION: `'@VERSION@'`,
+        OTUI_TREE_SITTER_WORKER_PATH: "/$bunfs/root/" + relativeWorker.replace(/\\/g, "/"),
+        OPENCODE_CHANNEL: `'@CHANNEL@'`,
+      },
+      compile: {
+        target,
+        outfile: "opencode",
+        execArgv: ["--user-agent=opencode/" + version, "--env-file=\"\"", "--"],
+        windows: {},
+      },
+    })
+    EOF
+
+    substituteInPlace bun-build.ts \
+      --replace '@VERSION@' "${finalAttrs.version}" \
+      --replace '@CHANNEL@' "latest"
+
+    export BUN_COMPILE_TARGET=${bun-target.${stdenvNoCC.hostPlatform.system}}
+    bun --bun bun-build.ts
 
     runHook postBuild
   '';

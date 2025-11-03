@@ -1,0 +1,14 @@
+--- a/packages/sdk/js/src/gen/client/utils.gen.ts	2025-11-03 17:10:58.871452098 +1100
++++ b/packages/sdk/js/src/gen/client/utils.gen.ts	2025-11-03 17:10:58.898452499 +1100
+@@ -169,8 +169,9 @@
+ 
+ export const mergeConfigs = (a: Config, b: Config): Config => {
+   const config = { ...a, ...b }
+-  if (config.baseUrl?.endsWith("/")) {
+-    config.baseUrl = config.baseUrl.substring(0, config.baseUrl.length - 1)
++  if (config.baseUrl) {
++    const baseUrl = typeof config.baseUrl === "string" ? config.baseUrl : config.baseUrl.toString()
++    config.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl
+   }
+   config.headers = mergeHeaders(a.headers, b.headers)
+   return config

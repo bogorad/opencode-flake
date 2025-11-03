@@ -1,8 +1,6 @@
-diff --git a/a/packages/opencode/src/cli/cmd/tui/thread.ts b/packages/opencode/src/cli/cmd/tui/thread.ts
-index 66a22bf9..19bf30dd 100644
---- a/a/packages/opencode/src/cli/cmd/tui/thread.ts
-+++ b/packages/opencode/src/cli/cmd/tui/thread.ts
-@@ -2,6 +2,7 @@ import { cmd } from "@/cli/cmd/cmd"
+--- a/packages/opencode/src/cli/cmd/tui/thread.ts	2025-11-03 17:00:01.752000789 +1100
++++ b/packages/opencode/src/cli/cmd/tui/thread.ts	2025-11-03 17:00:01.775001147 +1100
+@@ -2,6 +2,7 @@
  import { tui } from "./app"
  import { Rpc } from "@/util/rpc"
  import { type rpc } from "./worker"
@@ -10,32 +8,37 @@ index 66a22bf9..19bf30dd 100644
  import { upgrade } from "@/cli/upgrade"
  import { Session } from "@/session"
  import { bootstrap } from "@/cli/bootstrap"
-@@ -82,6 +83,28 @@ export const TuiThreadCommand = cmd({
+@@ -82,19 +83,11 @@
          return undefined
        })()
  
-+      if (typeof OPENCODE_TUI_PATH !== "undefined" && OPENCODE_TUI_PATH) {
-+        const server = Server.listen({
-+          port: 0,
-+          hostname: "127.0.0.1",
-+        })
+-      const worker = new Worker("./src/cli/cmd/tui/worker.ts")
+-      worker.onerror = console.error
+-      const client = Rpc.client<typeof rpc>(worker)
+-      process.on("uncaughtException", (e) => {
+-        console.error(e)
+-      })
+-      process.on("unhandledRejection", (e) => {
+-        console.error(e)
+-      })
+-      const server = await client.call("server", {
+-        port: args.port,
+-        hostname: args.hostname,
++      const server = Server.listen({
++        port: args.port ?? 0,
++        hostname: args.hostname ?? "127.0.0.1",
+       })
 +
-+        const proc = Bun.spawn({
-+          cmd: [OPENCODE_TUI_PATH],
-+          cwd,
-+          stdout: "inherit",
-+          stderr: "inherit",
-+          stdin: "inherit",
-+          env: {
-+            ...process.env,
-+            OPENCODE_SERVER: server.url.toString(),
-+          },
-+          onExit: () => server.stop(),
-+        })
-+
-+        await proc.exited
-+        return
-+      }
-       const worker = new Worker("./src/cli/cmd/tui/worker.ts")
-       worker.onerror = console.error
-       const client = Rpc.client<typeof rpc>(worker)
+       await tui({
+         url: server.url,
+         sessionID,
+@@ -102,7 +95,8 @@
+         agent: args.agent,
+         prompt: args.prompt,
+         onExit: async () => {
+-          await client.call("shutdown", undefined)
++          await import("@/global").then((mod) => mod.Global.disposeAll())
++          server.stop()
+         },
+       })
+     })
