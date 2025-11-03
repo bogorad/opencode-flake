@@ -62,15 +62,34 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       writableTmpDirAsHomeHook
     ];
     dontConfigure = true;
+
     buildPhase = ''
       runHook preBuild
+
       export BUN_INSTALL_CACHE_DIR=$(mktemp -d)
+
+      # NOTE: Disabling post-install scripts with `--ignore-scripts` to avoid
+      # shebang issues
+      # NOTE: `--linker=hoisted` temporarily disables Bun's isolated installs,
+      # which became the default in Bun 1.3.0.
+      # See: https://bun.com/blog/bun-v1.3#isolated-installs-are-now-the-default-for-workspaces
+      # This workaround is required because the 'yargs' dependency is currently
+      # missing when building opencode. Remove this flag once upstream is
+      # compatible with Bun 1.3.0.
+      # which became the default in Bun 1.3.0.
+      echo " `--linker=hoisted` temporarily disables Bun's isolated installs,"
       bun install \
+        --filter=opencode \
         --force \
+        --frozen-lockfile \
         --ignore-scripts \
-        --no-progress
+        --linker=hoisted \
+        --no-progress \
+        --production
+
       runHook postBuild
     '';
+
     installPhase = ''
       runHook preInstall
       mkdir -p $out/node_modules
@@ -81,7 +100,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     outputHash =
       {
         x86_64-linux = "sha256-Tfl2fRCWAUcKh9IID8Q30QIyt2rklYXNY4Praa+S3JA=";
-        aarch64-linux = "sha256-rAaFaD07OYi4obGPCo4k/cAt4oNNfIYWIzJFV68aEhM=";
+        aarch64-linux = "sha256-G1ecNsAp2iQdU5W5+qaSCB2USFOwmL3SM5rdhl/a+2Q=";
+
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
