@@ -4,10 +4,6 @@ This repository provides a Nix flake for installing **[OpenCode](https://github.
 
 The primary goal of this flake is to provide a reliable and **continuously updated** package for the Nix ecosystem.
 
-## Note on TUI Functionality
-
-As of `v1.0.16`, this package provides the core **CLI functionality only** (`run`, `serve`, `auth`, etc.). The interactive terminal user interface (TUI) is not functional due to upstream architectural changes. The build focuses on providing a stable and up-to-date command-line agent.
-
 ## Features
 
 - **Fully Automated:** A GitHub Action runs on a schedule to check for new upstream releases.
@@ -119,3 +115,8 @@ This is the main workflow, triggered only when a new version is detected. It seq
 5.  **Step 5: Commit and Push:**
     - If `package.nix` has been modified, the workflow commits the changes with a descriptive message (e.g., `Update OpenCode to 1.0.8`).
     - It runs `git pull --rebase` to prevent push conflicts, then pushes the commit and a corresponding version tag back to the repository.
+
+**Special thanks to:**
+
+- [Aodhan Hayter](https://github.com/AodhanHayter) for the original flake idea
+- [Albert O'Shea](https://github.com/Alb-O) for the know-how implementing changes brought by v1.10
