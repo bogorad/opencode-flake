@@ -2,13 +2,13 @@
   lib,
   stdenv,
   stdenvNoCC,
-  buildGoModule,
   bun,
   fetchFromGitHub,
   makeBinaryWrapper,
   models-dev,
   nix-update-script,
   testers,
+  wiggle,
   writableTmpDirAsHomeHook,
 }:
 
@@ -22,32 +22,12 @@ let
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "opencode";
-  version = "1.0.9";
+  version = "1.0.16";
   src = fetchFromGitHub {
     owner = "sst";
     repo = "opencode";
     rev = "v${finalAttrs.version}";
-    hash = "sha256-LC0DdYqoKrKAqeeya7OC7gdQnL7zGqnyYsCwJOhtEx8=";
-  };
-
-  tui = buildGoModule {
-    pname = "opencode-tui";
-    inherit (finalAttrs) version src;
-    nativeBuildInputs = [ writableTmpDirAsHomeHook ];
-    modRoot = "packages/tui";
-    vendorHash = "sha256-muwry7B0GlgueV8+9pevAjz3Cg3MX9AMr+rBwUcQ9CM=";
-    subPackages = [ "cmd/opencode" ];
-    env.CGO_ENABLED = 0;
-    ldflags = [
-      "-s"
-      "-w"
-      "-X=main.Version=${finalAttrs.version}"
-    ];
-    overrideModAttrs = (
-      _: {
-        GOPROXY = "https://proxy.golang.org,direct";
-      }
-    );
+    hash = "sha256-brfAz8IT8RNkKTDvyd0zaeb2FJqtjnrvOqkqHzm/j0w=";
   };
 
   node_modules = stdenvNoCC.mkDerivation {
@@ -99,9 +79,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
     outputHash =
       {
-        x86_64-linux = "sha256-Tfl2fRCWAUcKh9IID8Q30QIyt2rklYXNY4Praa+S3JA=";
-        aarch64-linux = "sha256-G1ecNsAp2iQdU5W5+qaSCB2USFOwmL3SM5rdhl/a+2Q=";
-
+        x86_64-linux = "sha256-bLbDRdhU5O7emmb3OMo/LPJQtbwyk6xrTryt07ihm34=";
+        aarch64-linux = "";
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
@@ -112,12 +91,38 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     bun
     makeBinaryWrapper
     models-dev
+    wiggle
   ];
 
   patches = [
-    ./local-models-dev.patch
-    ./local-tui-spawn.patch
+    ./patches/local-models-dev.patch
+    ./patches/thread-rename.patch
+    ./patches/spawn-default.patch
+    ./patches/spawn-params.patch
+    ./patches/attach-params.patch
   ];
+
+  patchPhase = ''
+    runHook prePatch
+    
+    echo "applying patch ./patches/local-models-dev.patch using wiggle"
+    wiggle --replace packages/opencode/src/provider/models-macro.ts ${./patches/local-models-dev.patch}
+    
+    echo "applying patch ./patches/thread-rename.patch using wiggle"
+    wiggle --replace packages/opencode/src/cli/cmd/tui/thread.ts ${./patches/thread-rename.patch}
+    
+    echo "applying patch ./patches/spawn-default.patch using wiggle"
+    wiggle --replace packages/opencode/src/cli/cmd/tui/spawn.ts ${./patches/spawn-default.patch}
+    rm -f packages/opencode/src/cli/cmd/tui/spawn.ts.porig
+    
+    echo "applying patch ./patches/spawn-params.patch using wiggle"
+    wiggle --replace packages/opencode/src/cli/cmd/tui/spawn.ts ${./patches/spawn-params.patch}
+    
+    echo "applying patch ./patches/attach-params.patch using wiggle"
+    wiggle --replace packages/opencode/src/cli/cmd/tui/attach.ts ${./patches/attach-params.patch}
+    
+    runHook postPatch
+  '';
 
   configurePhase = ''
     runHook preConfigure
@@ -145,15 +150,18 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     }
     EOF
 
+    # Build with all entry points like official build.ts does
     bun build \
-      --define OPENCODE_TUI_PATH='"${finalAttrs.tui}/bin/opencode"' \
       --define OPENCODE_VERSION='"${finalAttrs.version}"' \
+      --define OPENCODE_CHANNEL='"latest"' \
       --compile \
       --compile-exec-argv="--" \
       --target=${bun-target.${stdenvNoCC.hostPlatform.system}} \
       --outfile=opencode \
       --tsconfig-override tsconfig.build.json \
+      --loader=.json:json \
       ./packages/opencode/src/index.ts \
+      ./node_modules/@opentui/core/parser.worker.js \
       ./packages/opencode/src/cli/cmd/tui/worker.ts
 
     runHook postBuild
@@ -169,8 +177,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   postFixup = ''
     wrapProgram $out/bin/opencode \
-      --set LD_LIBRARY_PATH "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}" \
-      --set OPENCODE_TUI_PATH "${finalAttrs.tui}/bin/opencode"
+      --set LD_LIBRARY_PATH "${lib.makeLibraryPath [ stdenv.cc.cc.lib ]}"
   '';
 
   passthru = {
@@ -182,19 +189,19 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     updateScript = nix-update-script {
       extraArgs = [
         "--subpackage"
-        "tui"
-        "--subpackage"
         "node_modules"
       ];
     };
   };
 
   meta = {
-    description = "AI coding agent built for the terminal";
+    description = "AI coding agent built for the terminal (CLI-only)";
     longDescription = ''
-      OpenCode is a terminal-based agent that can build anything.
-      It combines a TypeScript/JavaScript core with a Go-based TUI
-      to provide an interactive AI coding experience.
+      OpenCode is an AI coding agent.
+      
+      Note: This build provides CLI functionality only (run, serve, auth, etc.).
+      The interactive TUI is not functional in version 1.0.16 due to
+      incompatibilities with the @opentui-based architecture.
     '';
     homepage = "https://github.com/sst/opencode";
     license = lib.licenses.mit;

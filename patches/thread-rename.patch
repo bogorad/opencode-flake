@@ -1,0 +1,13 @@
+diff --git i/packages/opencode/src/cli/cmd/tui/thread.ts w/packages/opencode/src/cli/cmd/tui/thread.ts
+index 12345678..12345678 100644
+--- i/packages/opencode/src/cli/cmd/tui/thread.ts
++++ w/packages/opencode/src/cli/cmd/tui/thread.ts
+@@ -10,7 +10,7 @@ import path from "path"
+ import { UI } from "@/cli/ui"
+ 
+ export const TuiThreadCommand = cmd({
+-  command: "$0 [project]",
++  command: "thread [project]",
+   describe: "start opencode tui",
+   builder: (yargs) =>
+     yargs
