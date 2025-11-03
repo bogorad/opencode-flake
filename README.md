@@ -1,15 +1,19 @@
 # OpenCode Nix Flake/Package
 
-[
 This repository provides a Nix flake for installing **[OpenCode](https://github.com/sst/opencode)**, a powerful terminal-based AI coding agent.
 
 The primary goal of this flake is to provide a reliable and **continuously updated** package for the Nix ecosystem.
+
+## Note on TUI Functionality
+
+As of `v1.0.16`, this package provides the core **CLI functionality only** (`run`, `serve`, `auth`, etc.). The interactive terminal user interface (TUI) is not functional due to upstream architectural changes. The build focuses on providing a stable and up-to-date command-line agent.
 
 ## Features
 
 - **Fully Automated:** A GitHub Action runs on a schedule to check for new upstream releases.
 - **Always Up-to-Date:** When a new version of OpenCode is released, this flake automatically updates the version, fetches the new source code, and corrects all dependency hashes.
 - **Reproducible:** Built with Nix for perfect, bit-for-bit reproducibility.
+- **CLI Enhancements:** Applies several patches to add useful command-line arguments (`--session`, `--model`, `--prompt`, `--agent`) that are not available in the upstream version, allowing for more flexible scripting and control.
 - **Robust Build Process:** The Nix build includes critical overrides to handle complex TypeScript and JSX configurations, ensuring reliable builds across updates.
 
 ## Installation
@@ -99,25 +103,19 @@ This is the main workflow, triggered only when a new version is detected. It seq
     - It then manually prefetches the source code tarball for the new version using `nix-prefetch-url` to get the correct content hash.
     - It uses `sed` to replace the old `hash` in `package.nix` with the new one.
 
-3.  **Step 2: Fix Go Vendor Hash:**
-
-    - The `vendorHash` for the Go-based TUI is reset to a known dummy value (e.g., `sha256-AAAA...`).
-    - The script attempts to build _only_ the TUI component (`.#opencode.tui`). This build is guaranteed to fail due to the hash mismatch.
-    - It parses the correct hash from the `got: ...` line in the Nix error output and writes it back into `package.nix`.
-
-4.  **Step 3 & 4: Fix Node.js Modules Hashes (for `x86_64` and `aarch64`):**
+3.  **Step 2 & 3: Fix Node.js Modules Hashes (for `x86_64` and `aarch64`):**
 
     - The same process is repeated for the `node_modules` dependency for both `x86_64-linux` and `aarch64-linux` architectures.
     - The `outputHash` for each architecture is set to a dummy value (`sha256-BBBB...`).
     - An architecture-specific build is attempted, which fails as expected.
     - The correct hash is parsed from the error log and written to `package.nix`.
 
-5.  **Step 5: Verification Build with Overrides:**
+4.  **Step 4: Verification Build with Overrides:**
 
     - With all hashes now correct, the workflow runs a final `nix build` command.
     - **Crucially**, this build step uses a dynamically generated `tsconfig.build.json` inside the Nix derivation. This override file forces the correct SolidJS JSX transform and configures all necessary path aliases (`@/*` and `@tui/*`), ensuring the `bun` build tool can correctly compile the project regardless of any conflicting configurations in the upstream source code.
     - The build's success serves as **absolute verification** that all hashes and build configurations are correct.
 
-6.  **Step 6: Commit and Push:**
+5.  **Step 5: Commit and Push:**
     - If `package.nix` has been modified, the workflow commits the changes with a descriptive message (e.g., `Update OpenCode to 1.0.8`).
     - It runs `git pull --rebase` to prevent push conflicts, then pushes the commit and a corresponding version tag back to the repository.
