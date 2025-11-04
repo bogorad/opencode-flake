@@ -2,19 +2,17 @@ name: Update OpenCode
 
 on:
   repository_dispatch:
-    types:
-      [
-        opencode-release-detected,
-      ]
+    types: [opencode-release-detected]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  update:
+  update-version:
     runs-on: ubuntu-latest
-
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,20 +25,14 @@ jobs:
       - name: Install nix-update
         run: nix profile add nixpkgs#nix-update
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Step 1 - Update Version and Source Hash
+      - name: Update Version and Source Hash
+        id: version
         run: |
           echo "▶ Updating version with nix-update..."
           nix-update --flake opencode --version=auto || true
 
           VERSION=$(grep -oP 'version = "\K[^"]+' package.nix | head -1)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "✓ Version set to: $VERSION"
 
@@ -55,73 +47,125 @@ jobs:
           sed -i -E "s|(hash = \")[^\"]*(\")|\\1$SRI\\2|" package.nix
           echo "✓ Source hash updated: $SRI"
 
-      - name: Step 2 - Fix node_modules x86_64-linux Output Hash
-        run: |
-          echo "▶ Setting dummy x86_64-linux node_modules outputHash..."
-          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
-          sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$DUMMY_B\\2|" package.nix
+      - name: Upload updated package.nix
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-nix-version-updated
+          path: package.nix
 
-          echo "▶ Building node_modules to discover correct x86_64-linux outputHash..."
-          BUILD_LOG=$(nix build .#opencode --system x86_64-linux -L 2>&1) || true
+  build-hashes:
+    needs: update-version
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64-linux
+            runner: ubuntu-latest
+          - arch: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download updated package.nix
+        uses: actions/download-artifact@v4
+        with:
+          name: package-nix-version-updated
+
+      - name: Setup Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Build and Extract Hash for ${{ matrix.arch }}
+        id: hash
+        run: |
+          echo "▶ Setting dummy node_modules outputHash for ${{ matrix.arch }}..."
+          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+          sed -i -E "s|(${{ matrix.arch }} = \")[^\"]*(\")|\\1$DUMMY_B\\2|" package.nix
+
+          echo "▶ Building node_modules to discover correct outputHash for ${{ matrix.arch }}..."
+          BUILD_LOG=$(nix build .#opencode --system ${{ matrix.arch }} -L 2>&1) || true
 
           CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
 
           if [ -z "$CORRECT_HASH" ]; then
-            echo "✗ Failed to extract x86_64-linux node_modules hash"
+            echo "✗ Failed to extract ${{ matrix.arch }} node_modules hash"
             echo "$BUILD_LOG" | tail -100
             exit 1
           fi
 
-          echo "▶ Writing x86_64-linux outputHash to package.nix..."
-          sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
-          echo "✓ x86_64-linux node_modules hash updated: $CORRECT_HASH"
+          echo "✓ ${{ matrix.arch }} node_modules hash: $CORRECT_HASH"
 
-      - name: Step 3 - Fix node_modules aarch64-linux Output Hash
+          # Create the hash file
+          echo "$CORRECT_HASH" > hash.txt
+
+      - name: Upload hash for ${{ matrix.arch }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hash-${{ matrix.arch }}
+          path: hash.txt
+
+  finalize:
+    needs: [update-version, build-hashes]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Download updated package.nix
+        uses: actions/download-artifact@v4
+        with:
+          name: package-nix-version-updated
+
+      - name: Download x86_64 hash
+        uses: actions/download-artifact@v4
+        with:
+          name: hash-x86_64-linux
+          path: hash-x86_64
+
+      - name: Download aarch64 hash
+        uses: actions/download-artifact@v4
+        with:
+          name: hash-aarch64-linux
+          path: hash-aarch64
+
+      - name: Configure Git
         run: |
-          echo "▶ Setting dummy aarch64-linux node_modules outputHash..."
-          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
-          sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$DUMMY_B\\2|" package.nix
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          echo "▶ Building node_modules to discover correct aarch64-linux outputHash (emulated)..."
-          BUILD_LOG=$(nix build .#opencode --system aarch64-linux -L 2>&1) || true
-
-          CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
-
-          if [ -z "$CORRECT_HASH" ]; then
-            echo "✗ Failed to extract aarch64-linux node_modules hash"
-            echo "$BUILD_LOG" | tail -100
-            exit 1
-          fi
-
-          echo "▶ Writing aarch64-linux outputHash to package.nix..."
-          sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
-          echo "✓ aarch64-linux node_modules hash updated: $CORRECT_HASH"
-
-      - name: Step 4 - Verification Build
+      - name: Apply All Hashes
         run: |
-          echo "▶ Running final verification build for x86_64-linux..."
-          nix build .#opencode --system x86_64-linux -L
-          echo "✓ Build successful - all hashes are correct!"
+          X86_HASH=$(cat hash-x86_64/hash.txt)
+          ARM_HASH=$(cat hash-aarch64/hash.txt)
 
-      - name: Step 5 - Commit and Push Changes
+          echo "▶ Applying x86_64-linux hash: $X86_HASH"
+          sed -i -E "s|(x86_64-linux = \")[^\"]*(\")|\\1$X86_HASH\\2|" package.nix
+
+          echo "▶ Applying aarch64-linux hash: $ARM_HASH"
+          sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$ARM_HASH\\2|" package.nix
+
+      - name: Commit and Push Changes
         run: |
+          VERSION="${{ needs.update-version.outputs.version }}"
           echo "▶ Checking for changes to package.nix..."
           if ! git diff --quiet package.nix; then
             echo "✓ Changes detected. Committing and pushing..."
             git add package.nix
-            git commit -m "Update OpenCode to ${{ env.VERSION }}" \
+            git commit -m "Update OpenCode to $VERSION" \
               -m "Automated hash updates for all architectures" \
               -m "- Source hash verified" \
               -m "- Node modules hashes verified (x86_64 & aarch64)"
             
-            git tag -f "v${{ env.VERSION }}"
+            git tag -f "v$VERSION"
             
             echo "▶ Synchronizing with remote branch..."
             git pull origin master --rebase
             
             echo "▶ Pushing changes to remote..."
             git push origin HEAD:master
-            git push -f origin "v${{ env.VERSION }}"
+            git push -f origin "v$VERSION"
             
             echo "✓ Update complete!"
           else
