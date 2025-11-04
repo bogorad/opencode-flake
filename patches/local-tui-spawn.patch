@@ -1,18 +1,25 @@
---- a/packages/opencode/src/cli/cmd/tui/thread.ts	2025-11-03 17:00:01.752000789 +1100
-+++ b/packages/opencode/src/cli/cmd/tui/thread.ts	2025-11-03 17:00:01.775001147 +1100
-@@ -2,6 +2,7 @@
+--- a/packages/opencode/src/cli/cmd/tui/thread.ts
++++ b/packages/opencode/src/cli/cmd/tui/thread.ts
+@@ -1,7 +1,6 @@
+ import { cmd } from "@/cli/cmd/cmd"
  import { tui } from "./app"
- import { Rpc } from "@/util/rpc"
- import { type rpc } from "./worker"
+-import { Rpc } from "@/util/rpc"
+-import { type rpc } from "./worker"
 +import { Server } from "../../../server/server"
  import { upgrade } from "@/cli/upgrade"
  import { Session } from "@/session"
  import { bootstrap } from "@/cli/bootstrap"
-@@ -82,19 +83,11 @@
+@@ -88,24 +87,9 @@
          return undefined
        })()
  
--      const worker = new Worker("./src/cli/cmd/tui/worker.ts")
+-      const worker = new Worker("./src/cli/cmd/tui/worker.ts", {
+-        env: Object.fromEntries(
+-          Object.entries(process.env).filter(
+-            (entry): entry is [string, string] => entry[1] !== undefined,
+-          ),
+-        ),
+-      })
 -      worker.onerror = console.error
 -      const client = Rpc.client<typeof rpc>(worker)
 -      process.on("uncaughtException", (e) => {
@@ -28,13 +35,11 @@
 +        port: args.port ?? 0,
 +        hostname: args.hostname ?? "127.0.0.1",
        })
-+
        await tui({
          url: server.url,
-         sessionID,
-@@ -102,7 +95,8 @@
+@@ -114,7 +98,8 @@
          agent: args.agent,
-         prompt: args.prompt,
+         prompt,
          onExit: async () => {
 -          await client.call("shutdown", undefined)
 +          await import("@/global").then((mod) => mod.Global.disposeAll())
