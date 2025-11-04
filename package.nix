@@ -66,8 +66,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
     outputHash =
       {
-        x86_64-linux = "sha256-Ab56FMU8U0bh2iMEiDdxhxGupw4tzPRWTm01paMrOEo=";
-        aarch64-linux = "sha256-7oKkYsUZLEVpwd5O9X64up+f85F/A3M+qR+rPPA58qo=";
+        x86_64-linux = "sha256-S77NbdzNuHALDapU3Qr/lGPwvHCvyGxr+nyVEO9zeBg=";
+        aarch64-linux = "sha256-q2A5H4mPWt1jaCzz7yl8vfi/z33MNSN1IHAMUK1eL8A=";
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
