@@ -1,0 +1,11 @@
+--- a/packages/opencode/src/cli/cmd/tui/thread.ts
++++ b/packages/opencode/src/cli/cmd/tui/thread.ts
+@@ -1,7 +1,6 @@
+ import { cmd } from "@/cli/cmd/cmd"
+ import { tui } from "./app"
+-import { Rpc } from "@/util/rpc"
+-import { type rpc } from "./worker"
++import { Server } from "../../../server/server"
+ import { upgrade } from "@/cli/upgrade"
+ import { Session } from "@/session"
+ import { bootstrap } from "@/cli/bootstrap"

@@ -66,7 +66,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
     outputHash =
       {
-        x86_64-linux = "sha256-6uP0KDrVnh2VAS2PSjrQFZqQQBHKHSdhSO0VV46I0KA=";
+        x86_64-linux = "sha256-S77NbdzNuHALDapU3Qr/lGPwvHCvyGxr+nyVEO9zeBg=";
         aarch64-linux = "sha256-q2A5H4mPWt1jaCzz7yl8vfi/z33MNSN1IHAMUK1eL8A=";
       }
       .${stdenv.hostPlatform.system};
@@ -82,7 +82,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   patches = [
     ./patches/local-models-dev.patch
-    ./patches/local-tui-spawn.patch
+    ./patches/local-tui-spawn-imports.patch
+    ./patches/local-tui-spawn-worker.patch
     ./patches/local-sdk-baseurl.patch
   ];
 
