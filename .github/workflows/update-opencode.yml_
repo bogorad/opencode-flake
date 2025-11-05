@@ -23,29 +23,18 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
 
       - name: Install nix-update
-        run: nix profile add nixpkgs#nix-update
+        run: nix profile install nixpkgs#nix-update
 
       - name: Update Version and Source Hash
         id: version
         run: |
-          echo "▶ Updating version with nix-update..."
-          nix-update --flake opencode --version=auto || true
+          echo "▶ Updating version and source hash with nix-update..."
+          nix-update --flake opencode --version=auto
 
           VERSION=$(grep -oP 'version = "\K[^"]+' package.nix | head -1)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "✓ Version set to: $VERSION"
-
-          echo "▶ Constructing source URL..."
-          SRC_URL="https://github.com/sst/opencode/archive/refs/tags/v${VERSION}.tar.gz"
-
-          echo "▶ Prefetching source hash..."
-          BASE32=$(nix-prefetch-url --unpack "$SRC_URL" --type sha256)
-          SRI=$(nix hash convert --hash-algo sha256 --to sri "$BASE32")
-
-          echo "▶ Writing source hash to package.nix..."
-          sed -i -E "s|(hash = \")[^\"]*(\")|\\1$SRI\\2|" package.nix
-          echo "✓ Source hash updated: $SRI"
+          echo "✓ Version and source hash updated to: $VERSION"
 
       - name: Upload updated package.nix
         uses: actions/upload-artifact@v4
@@ -75,15 +64,11 @@ jobs:
       - name: Setup Nix
         uses: DeterminateSystems/nix-installer-action@main
 
-      - name: Build and Extract Hash for ${{ matrix.arch }}
+      - name: Build node_modules and Extract Hash for ${{ matrix.arch }}
         id: hash
         run: |
-          echo "▶ Setting dummy node_modules outputHash for ${{ matrix.arch }}..."
-          DUMMY_B="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
-          sed -i -E "s|(${{ matrix.arch }} = \")[^\"]*(\")|\\1$DUMMY_B\\2|" package.nix
-
-          echo "▶ Building node_modules to discover correct outputHash for ${{ matrix.arch }}..."
-          BUILD_LOG=$(nix build .#opencode --system ${{ matrix.arch }} -L 2>&1) || true
+          echo "▶ Step 1: Building node_modules to discover correct hash for ${{ matrix.arch }}..."
+          BUILD_LOG=$(nix build .#opencode.node_modules --system ${{ matrix.arch }} -L 2>&1) || true
 
           CORRECT_HASH=$(echo "$BUILD_LOG" | grep -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' | head -1)
 
@@ -93,9 +78,26 @@ jobs:
             exit 1
           fi
 
-          echo "✓ ${{ matrix.arch }} node_modules hash: $CORRECT_HASH"
+          echo "✓ Discovered hash for ${{ matrix.arch }}: $CORRECT_HASH"
 
-          # Create the hash file
+          echo "▶ Step 2: Updating hash in package.nix..."
+          sed -i -E "s|(${{ matrix.arch }} = \")[^\"]*(\")|\\1$CORRECT_HASH\\2|" package.nix
+
+          echo "▶ Step 3: Rebuilding node_modules with correct hash..."
+          if ! nix build .#opencode.node_modules --system ${{ matrix.arch }} -L --rebuild; then
+            echo "✗ Failed to rebuild node_modules for ${{ matrix.arch }}"
+            exit 1
+          fi
+          echo "✓ node_modules rebuilt successfully"
+
+          echo "▶ Step 4: Building full opencode package..."
+          if ! nix build .#opencode --system ${{ matrix.arch }} -L; then
+            echo "✗ Failed to build opencode package for ${{ matrix.arch }}"
+            exit 1
+          fi
+          echo "✓ Full package built successfully for ${{ matrix.arch }}"
+
+          # Save the hash for final commit
           echo "$CORRECT_HASH" > hash.txt
 
       - name: Upload hash for ${{ matrix.arch }}
@@ -135,7 +137,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Apply All Hashes
+      - name: Apply All Hashes and Commit
         run: |
           X86_HASH=$(cat hash-x86_64/hash.txt)
           ARM_HASH=$(cat hash-aarch64/hash.txt)
@@ -146,17 +148,17 @@ jobs:
           echo "▶ Applying aarch64-linux hash: $ARM_HASH"
           sed -i -E "s|(aarch64-linux = \")[^\"]*(\")|\\1$ARM_HASH\\2|" package.nix
 
-      - name: Commit and Push Changes
-        run: |
           VERSION="${{ needs.update-version.outputs.version }}"
           echo "▶ Checking for changes to package.nix..."
+          
           if ! git diff --quiet package.nix; then
             echo "✓ Changes detected. Committing and pushing..."
             git add package.nix
             git commit -m "Update OpenCode to $VERSION" \
-              -m "Automated hash updates for all architectures" \
-              -m "- Source hash verified" \
-              -m "- Node modules hashes verified (x86_64 & aarch64)"
+              -m "Automated update with verified builds" \
+              -m "- Version and source hash updated via nix-update" \
+              -m "- Node modules hashes verified and built successfully" \
+              -m "- Full package builds verified (x86_64 & aarch64)"
             
             git tag -f "v$VERSION"
             
@@ -171,3 +173,4 @@ jobs:
           else
             echo "✓ No changes to package.nix. Repository is already up-to-date."
           fi
+

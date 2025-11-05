@@ -21,12 +21,12 @@ let
 in
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "opencode";
-  version = "1.0.23";
+  version = "1.0.25";
   src = fetchFromGitHub {
     owner = "sst";
     repo = "opencode";
     rev = "v${finalAttrs.version}";
-    hash = "sha256-08C7HDzSqm3AZeUh9UlULCSDST0opXYUE2h8WOe+YSA=";
+    hash = "sha256-FXnSm4fkzois25e8VQOC72l1ZeRgTeyzavYUKY32GCs=";
   };
 
   node_modules = stdenvNoCC.mkDerivation {
@@ -66,8 +66,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     dontFixup = true;
     outputHash =
       {
-        x86_64-linux = "sha256-S77NbdzNuHALDapU3Qr/lGPwvHCvyGxr+nyVEO9zeBg=";
-        aarch64-linux = "sha256-q2A5H4mPWt1jaCzz7yl8vfi/z33MNSN1IHAMUK1eL8A=";
+        x86_64-linux = "sha256-JfZ+Uj759CUdeEkaku3ATa8AS3zUnkycW+4WTqnzkGc=";
+        aarch64-linux = "sha256-gWE4ZUFWKUl0JIAataz/hp+qkN74wlobN1Td/tJXMUc=";
       }
       .${stdenv.hostPlatform.system};
     outputHashAlgo = "sha256";
@@ -200,14 +200,14 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       It combines a TypeScript/JavaScript core with a Go-based TUI
       to provide an interactive AI coding experience.
     '';
-    homepage = "https://github.com/sst/opencode";
+    homepage = "https://github.com/bogorad/opencode-flake";
     license = lib.licenses.mit;
     platforms = lib.platforms.unix;
     maintainers = [
       {
-        email = "aodhan.hayter@gmail.com";
-        github = "AodhanHayter";
-        name = "Aodhan Hayter";
+        email = "bogorad@gmail.com";
+        github = "bogorad";
+        name = "Eugene Bogorad";
       }
     ];
     mainProgram = "opencode";
