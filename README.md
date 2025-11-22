@@ -1,3 +1,5 @@
+**UPDATE:** This worked for a while, then was superceeded by the great work from @Alb-o and finally I gave up on bun and just created a hacky way of just running the latest binary from `/bin/` - https://github.com/bogorad/oc-bin-flake
+
 # OpenCode Nix Flake/Package
 
 This repository provides a Nix flake for installing **[OpenCode](https://github.com/sst/opencode)**, a powerful terminal-based AI coding agent.
